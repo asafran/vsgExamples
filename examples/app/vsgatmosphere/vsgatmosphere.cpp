@@ -58,17 +58,21 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     constexpr double kMieAngstromAlpha = 0.0;
     constexpr double kMieAngstromBeta = 5.328e-3;
     constexpr double kMieSingleScatteringAlbedo = 0.9;
-    constexpr float kMiePhaseFunctionG = 0.8f;
+    constexpr double kMiePhaseFunctionG = 0.8;
     constexpr double kGroundAlbedo = 0.1;
     const double max_sun_zenith_angle = 120.0 / 180.0 * vsg::PI;
 
     atmosphere::DensityProfileLayer rayleigh_layer{0.0, 1.0, -1.0 / kRayleighScaleHeight, 0.0, 0.0};
-    atmosphere::DensityProfileLayer mie_layer{0.0, 1.0, -1.0 / kMieScaleHeight, 0.0, 0.0};
+    atmosphere::DensityProfileLayer mie_layer{0.0f, 1.0f, -1.0f / kMieScaleHeight, 0.0f, 0.0f};
 
     // Density profile increasing linearly from 0 to 1 between 10 and 25km, and
     // decreasing linearly from 1 to 0 between 25 and 40km. This is an approximate
     // profile from http://www.kln.ac.lk/science/Chemistry/Teaching_Resources/
     // Documents/Introduction%20to%20atmospheric%20chemistry.pdf (page 10).
+
+
+    bool use_constant_solar_spectrum_ = false;
+    bool use_ozone = true;
 
     std::vector<double> wavelengths;
     std::vector<double> solar_irradiance;
@@ -77,28 +81,24 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     std::vector<double> mie_extinction;
     std::vector<double> absorption_extinction;
     std::vector<double> ground_albedo;
-
-    bool use_constant_solar_spectrum_ = false;
-    bool use_ozone = true;
-
     for (int l = kLambdaMin; l <= kLambdaMax; l += 10) {
-       double lambda = static_cast<double>(l) * 1e-3;  // micro-meters
-       double mie =
-           kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha);
-       wavelengths.push_back(l);
-       if (use_constant_solar_spectrum_) {
-         solar_irradiance.push_back(kConstantSolarIrradiance);
-       } else {
-         solar_irradiance.push_back(kSolarIrradiance[(l - kLambdaMin) / 10]);
-       }
-       rayleigh_scattering.push_back(kRayleigh * pow(lambda, -4));
-       mie_scattering.push_back(mie * kMieSingleScatteringAlbedo);
-       mie_extinction.push_back(mie);
-       absorption_extinction.push_back(use_ozone ?
-           kMaxOzoneNumberDensity * kOzoneCrossSection[(l - kLambdaMin) / 10] :
-           0.0);
-       ground_albedo.push_back(kGroundAlbedo);
-     }
+      double lambda = static_cast<double>(l) * 1e-3;  // micro-meters
+      double mie =
+          kMieAngstromBeta / kMieScaleHeight * pow(lambda, -kMieAngstromAlpha);
+      wavelengths.push_back(l);
+      if (use_constant_solar_spectrum_) {
+        solar_irradiance.push_back(kConstantSolarIrradiance);
+      } else {
+        solar_irradiance.push_back(kSolarIrradiance[(l - kLambdaMin) / 10]);
+      }
+      rayleigh_scattering.push_back(kRayleigh * pow(lambda, -4));
+      mie_scattering.push_back(mie * kMieSingleScatteringAlbedo);
+      mie_extinction.push_back(mie);
+      absorption_extinction.push_back(use_ozone ?
+          kMaxOzoneNumberDensity * kOzoneCrossSection[(l - kLambdaMin) / 10] :
+          0.0);
+      ground_albedo.push_back(kGroundAlbedo);
+    }
 
     auto model = atmosphere::AtmosphereModel::create(window->getOrCreateDevice(), window->getOrCreatePhysicalDevice(), options);
     //model->compileSettings->generateDebugInfo = true;
@@ -106,16 +106,16 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     model->waveLengths = wavelengths;
     model->solarIrradiance = solar_irradiance;
     model->sunAngularRadius = 0.01935f;
-    model->bottomRadius = 6360000.0;
-    model->topRadius = 6420000.0;
+    model->bottomRadius = kBottomRadius;
+    model->topRadius = kTopRadius;
     model->rayleighDensityLayer = rayleigh_layer;
     model->rayleighScattering = rayleigh_scattering;
     model->mieDensityLayer = mie_layer;
     model->mieScattering = mie_scattering;
     model->mieExtinction = mie_extinction;
     model->miePhaseFunction_g = kMiePhaseFunctionG;
-    model->absorptionDensityLayer0 = atmosphere::DensityProfileLayer{static_cast<float>(25000.0 / 1000.0), 0.0f, 0.0f, static_cast<float>((1.0 / 15000.0) * 1000.0), static_cast<float>(-2.0 / 3.0)};
-    model->absorptionDensityLayer1 = atmosphere::DensityProfileLayer{0.0f, 0.0f, 0.0f, static_cast<float>((-1.0 / 15000.0) * 1000.0), static_cast<float>(8.0 / 3.0)};
+    model->absorptionDensityLayer0 = atmosphere::DensityProfileLayer{25000.0, 0.0, 0.0, 1.0 / 15000.0, -2.0 / 3.0};
+    model->absorptionDensityLayer1 = atmosphere::DensityProfileLayer{0.0, 0.0, 0.0, -1.0 / 15000.0, 8.0 / 3.0};
     model->absorptionExtinction = absorption_extinction;
     model->groundAlbedo = ground_albedo;
     model->maxSunZenithAngle = max_sun_zenith_angle;

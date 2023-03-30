@@ -13,11 +13,11 @@ namespace atmosphere {
 
 struct DensityProfileLayer
 {
-    float width = 0.0f;
-    float exp_term = 0.0f;
-    float exp_scale = 0.0f;
-    float linear_term = 0.0f;
-    float constant_term = 0.0f;
+    double width = 0.0;
+    double exp_term = 0.0;
+    double exp_scale = 0.0;
+    double linear_term = 0.0;
+    double constant_term = 0.0;
 };
 /*
 struct ShaderConstants
@@ -114,17 +114,17 @@ public:
     /// The sun's angular radius, in radians. Warning: the implementation uses
     /// approximations that are valid only if this value is smaller than 0.1.
     /// </summary>
-    float sunAngularRadius;
+    double sunAngularRadius;
 
     /// <summary>
     /// The distance between the planet center and the bottom of the atmosphere in m.
     /// </summary>
-    float bottomRadius;
+    double bottomRadius;
 
     /// <summary>
     /// The distance between the planet center and the top of the atmosphere in m.
     /// </summary>
-    float topRadius;
+    double topRadius;
 
     /// <summary>
     /// The density profile of air molecules, i.e. a function from altitude to
@@ -174,7 +174,7 @@ public:
     /// <summary>
     /// The asymetry parameter for the Cornette-Shanks phase function for the aerosols.
     /// </summary>
-    float miePhaseFunction_g;
+    double miePhaseFunction_g;
 
     /// <summary>
     /// The density profile of air molecules that absorb light (e.g. ozone), i.e.
@@ -223,12 +223,21 @@ public:
 
     vsg::ref_ptr<vsg::ShaderCompileSettings> compileSettings;
 
-private:   
+private:
+
+    struct Params
+    {
+        vsg::vec4 solar_irradiance;
+        vsg::vec4 rayleigh_scattering;
+        vsg::vec4 mie_scattering;
+        vsg::vec4 mie_extinction;
+        vsg::vec4 ground_albedo;
+        vsg::vec4 absorption_extinction;
+    };
+
     vsg::ref_ptr<vsg::Device> _device;
     vsg::ref_ptr<vsg::PhysicalDevice> _physicalDevice;
     vsg::ref_ptr<vsg::Options> _options;
-
-    vsg::ref_ptr<vsg::Commands> _commandGraph;
 
     vsg::ref_ptr<vsg::ImageInfo> _transmittanceTexture;
 
@@ -253,8 +262,8 @@ public:
 
     void initialize(int scatteringOrders);
 
-    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings) const;
-    vsg::ref_ptr<vsg::StateGroup> createCubeGroup(vsg::ref_ptr<vsg::Window> window) const;
+    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings);
+    vsg::ref_ptr<vsg::StateGroup> createCubeGroup(vsg::ref_ptr<vsg::Window> window);
 /*
     void bind_rendering_uniforms(dw::Program* program);
     void convert_spectrum_to_linear_srgb(double& r, double& g, double& b);
@@ -262,14 +271,27 @@ public:
 private:
     void generateTextures();
 
-    vsg::ref_ptr<vsg::ImageInfo> generate2D(uint32_t width, uint32_t height);
-    vsg::ref_ptr<vsg::ImageInfo> generate3D(uint32_t width, uint32_t height, uint32_t depth);
+    vsg::ref_ptr<vsg::ImageInfo> generate2D(uint32_t width, uint32_t height, bool init = false);
+    vsg::ref_ptr<vsg::ImageInfo> generate3D(uint32_t width, uint32_t height, uint32_t depth, bool init = false);
     vsg::ref_ptr<vsg::ImageInfo> generateCubemap(uint32_t size);
 
     int scatteringWidth() const { return scaterringNU * scaterringMU_S; }
     int scatteringHeight() const { return scaterringMU; }
     int scatteringDepth() const { return scaterringR; }
 
+    vsg::ref_ptr<vsg::BindComputePipeline> bindCompute(const vsg::Path& filename, vsg::ref_ptr<vsg::PipelineLayout> pipelineLayout) const;
+    vsg::ref_ptr<vsg::DescriptorSet> bindTransmittance() const;
+    vsg::ref_ptr<vsg::DescriptorSet> bindDirectIrradiance() const;
+    vsg::ref_ptr<vsg::DescriptorSet> bindSingleScattering() const;
+
+    vsg::ref_ptr<vsg::DescriptorSet> bindScatteringDensity() const;
+    vsg::ref_ptr<vsg::DescriptorSet> bindIndirectIrradiance() const;
+    vsg::ref_ptr<vsg::DescriptorSet> bindMultipleScattering() const;
+
+    vsg::ref_ptr<vsg::DescriptorSet> bindLuminanceFromRadiance(const vsg::mat4 &value, const vsg::vec3 &lambdas) const;
+    vsg::ref_ptr<vsg::DescriptorSetLayout> orderLayout() const;
+
+/*
     vsg::ref_ptr<vsg::Commands> transmittanceCommands() const;
     vsg::ref_ptr<vsg::Commands> directIrradianceCommands() const;
     vsg::ref_ptr<vsg::Commands> singleScatteringCommands() const;
@@ -277,7 +299,7 @@ private:
     vsg::ref_ptr<vsg::Commands> scatteringDensityCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
     vsg::ref_ptr<vsg::Commands> indirectIrradianceCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
     vsg::ref_ptr<vsg::Commands> multipleScatteringCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
-
+*/
     void setupShaderConstants();
     void assignRenderConstants();
 
