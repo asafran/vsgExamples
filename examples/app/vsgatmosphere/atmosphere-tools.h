@@ -8,7 +8,7 @@
 #include <vsg/maths/vec3.h>
 namespace atmosphere {
 
-double interpolate(
+inline double interpolate(
         const std::vector<double>& wavelengths,
         const std::vector<double>& wavelength_function,
         double wavelength)
@@ -43,8 +43,7 @@ constexpr double cieColorMatchingFunctionTableValue(double wavelength, int colum
         CIE_2_DEG_COLOR_MATCHING_FUNCTIONS[4 * (row + 1) + column] * u;
 }
 
-
-vsg::vec4 computeSpectralRadianceToLuminanceFactors(
+inline vsg::vec4 computeSpectralRadianceToLuminanceFactors(
     const std::vector<double>& wavelengths,
     const std::vector<double>& solar_irradiance,
     double lambda_power) {
@@ -83,7 +82,7 @@ vsg::vec4 computeSpectralRadianceToLuminanceFactors(
   return {static_cast<float>(k_r), static_cast<float>(k_g), static_cast<float>(k_b), 0.0f};
 }
 
-vsg::vec4 toVector(const std::vector<double>& wavelengths, const std::vector<double>& v, const vsg::vec3& lambdas, double scale)
+inline vsg::vec4 toVector(const std::vector<double>& wavelengths, const std::vector<double>& v, const vsg::vec3& lambdas, double scale)
 {
     auto r = static_cast<float>(interpolate(wavelengths, v, lambdas[0]) * scale);
     auto g = static_cast<float>(interpolate(wavelengths, v, lambdas[1]) * scale);

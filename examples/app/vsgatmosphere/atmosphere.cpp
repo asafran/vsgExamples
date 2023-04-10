@@ -25,69 +25,73 @@ AtmosphereModel::~AtmosphereModel()
 
 void AtmosphereModel::initialize(int scatteringOrders)
 {
-    /*
-    vsg::Names instanceExtensions;
-    vsg::Names requestedLayers;
-    vsg::Names deviceExtensions;
-
-    if(compileSettings->generateDebugInfo)
-        deviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
-
-    //instanceExtensions.push_back(VK_EXT_DEBUG_REPORT_EXTENSION_NAME);
-    //requestedLayers.push_back("VK_LAYER_KHRONOS_validation");
-
-    vsg::Names validatedNames = vsg::validateInstancelayerNames(requestedLayers);
-
-    // get the physical device that supports the required compute queue
-    auto instance = vsg::Instance::create(instanceExtensions, validatedNames);
-    auto [physicalDevice, computeQueueFamily] = instance->getPhysicalDeviceAndQueueFamily(VK_QUEUE_COMPUTE_BIT);
-    if (!physicalDevice || computeQueueFamily < 0)
-    {
-        //std::cout << "No vkPhysicalDevice available that supports compute." << std::endl;
-        return;
-    }
-
-    // create the logical device with specified queue, layers and extensions
-    vsg::QueueSettings queueSettings{vsg::QueueSetting{computeQueueFamily, {1.0}}};
-    _device = vsg::Device::create(physicalDevice, queueSettings, validatedNames, deviceExtensions);
-*/
     generateTextures();
 
-    setupShaderConstants();
+    assignComputeConstants();
 
     auto memoryBarrier = vsg::MemoryBarrier::create();
     memoryBarrier->srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     memoryBarrier->dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     auto memoryBarrierCmd = vsg::PipelineBarrier::create(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, memoryBarrier);
 
-    auto commandGraph = vsg::Commands::create();
     auto singlePass = vsg::Commands::create();
+    auto transmittanceCommands = vsg::Commands::create();
     auto multipleScattering = vsg::Commands::create();
 
-    auto luminanceFromRadiance = bindLuminanceFromRadiance(vsg::mat4(), {kLambdaR, kLambdaG, kLambdaB});
+    auto lfr = vsg::mat4Value::create(vsg::mat4());
+    auto parameters = vsg::Value<Parameters>::create(Parameters());
+    auto profiles = vsg::Array<DensityProfileLayer>::create(4);
+    profiles->set(0, rayleighDensityLayer);
+    profiles->set(1, mieDensityLayer);
+    profiles->set(2, absorptionDensityLayer0);
+    profiles->set(3, absorptionDensityLayer1);
+
+    auto pLayout = parametersLayout();
+
+    auto lfrBuffer = vsg::DescriptorBuffer::create(lfr, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    auto parametersBuffer = vsg::DescriptorBuffer::create(parameters, 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    auto proflesArray = vsg::DescriptorBuffer::create(profiles, 2, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    vsg::ref_ptr<vsg::BindDescriptorSet> bindParameters;
+    vsg::ref_ptr<vsg::BindDescriptorSet> bindOrder;
 
     {
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{luminanceFromRadiance->setLayout}, vsg::PushConstantRanges{});
-        auto bindDescriptorSet = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 1, luminanceFromRadiance);
-        bindDescriptorSet->slot = 2;
-        singlePass->addChild(bindDescriptorSet);
+        vsg::Descriptors descriptors{lfrBuffer, parametersBuffer, proflesArray};
+        auto descriptorSet = vsg::DescriptorSet::create(pLayout, descriptors);
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{pLayout}, vsg::PushConstantRanges{});
+        bindParameters = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 1, descriptorSet);
+        bindParameters->slot = 2;
+    }
+
+    auto oLayout = orderLayout();
+
+    auto order = vsg::intValue::create(0);
+    auto orderBuffer = vsg::DescriptorBuffer::create(order, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+    {
+        vsg::Descriptors descriptors{orderBuffer};
+        auto descriptorSet = vsg::DescriptorSet::create(oLayout, descriptors);
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{oLayout}, vsg::PushConstantRanges{});
+        bindOrder = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 2, descriptorSet);
+        bindOrder->slot = 3;
     }
 
     {
         auto texturesSet = bindTransmittance();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_transmittance_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
-        singlePass->addChild(bindPipeline);
-        singlePass->addChild(bindTextures);
-        singlePass->addChild(vsg::Dispatch::create(uint32_t(ceil(float(transmittanceWidth) / float(numThreads))),
+        transmittanceCommands->addChild(bindPipeline);
+        transmittanceCommands->addChild(bindTextures);
+        transmittanceCommands->addChild(vsg::Dispatch::create(uint32_t(ceil(float(transmittanceWidth) / float(numThreads))),
                                                      uint32_t(ceil(float(transmittanceHeight) / float(numThreads))), 1));
-        singlePass->addChild(memoryBarrierCmd);
+        transmittanceCommands->addChild(memoryBarrierCmd);
+        singlePass->addChild(transmittanceCommands);
     }
 
     {
         auto texturesSet = bindDirectIrradiance();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_direct_irradiance_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
         singlePass->addChild(bindPipeline);
@@ -99,7 +103,7 @@ void AtmosphereModel::initialize(int scatteringOrders)
 
     {
         auto texturesSet = bindSingleScattering();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_single_scattering_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
         singlePass->addChild(bindPipeline);
@@ -110,12 +114,11 @@ void AtmosphereModel::initialize(int scatteringOrders)
         singlePass->addChild(memoryBarrierCmd);
     }
 
-    auto orderL = orderLayout();
-    auto orderPipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{orderL}, vsg::PushConstantRanges{});
+
 
     {
         auto texturesSet = bindScatteringDensity();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout, orderL}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout, oLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_scattering_density_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
         multipleScattering->addChild(bindPipeline);
@@ -128,7 +131,7 @@ void AtmosphereModel::initialize(int scatteringOrders)
 
     {
         auto texturesSet = bindIndirectIrradiance();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout, orderL}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout, oLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_indirect_irradiance_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
         multipleScattering->addChild(bindPipeline);
@@ -140,7 +143,7 @@ void AtmosphereModel::initialize(int scatteringOrders)
 
     {
         auto texturesSet = bindMultipleScattering();
-        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, luminanceFromRadiance->setLayout, orderL}, vsg::PushConstantRanges{});
+        auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{texturesSet->setLayout, pLayout, oLayout}, vsg::PushConstantRanges{});
         auto bindPipeline = bindCompute("shaders/scattering/compute_multiple_scattering_cs.glsl", pipelineLayout);
         auto bindTextures = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, texturesSet);
         multipleScattering->addChild(bindPipeline);
@@ -151,26 +154,14 @@ void AtmosphereModel::initialize(int scatteringOrders)
         multipleScattering->addChild(memoryBarrierCmd);
     }
 
-    commandGraph->addChild(singlePass);
-
-    // Compute the 2nd, 3rd and 4th orderValue of scattering, in sequence.
-    for (int order = 2; order <= scatteringOrders; ++order)
-    {
-        auto descriptor = vsg::DescriptorBuffer::create(vsg::intValue::create(order), 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-        vsg::Descriptors descriptors{descriptor};
-        auto set = vsg::DescriptorSet::create(orderL, descriptors);
-        auto bindDescriptor = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, orderPipelineLayout, 2, set);
-        bindDescriptor->slot = 3;
-        commandGraph->addChild(bindDescriptor);
-
-        commandGraph->addChild(multipleScattering);
-    }
-
     // compile the Vulkan objects
     auto compileTraversal = vsg::CompileTraversal::create(_device);
     auto context = compileTraversal->contexts.front();
 
-    commandGraph->accept(*compileTraversal);
+    bindParameters->accept(*compileTraversal);
+    bindOrder->accept(*compileTraversal);
+    singlePass->accept(*compileTraversal);
+    multipleScattering->accept(*compileTraversal);
 
     int computeQueueFamily = _physicalDevice->getQueueFamily(VK_QUEUE_COMPUTE_BIT);
 
@@ -179,9 +170,73 @@ void AtmosphereModel::initialize(int scatteringOrders)
     auto fence = vsg::Fence::create(_device);
     auto computeQueue = _device->getQueue(computeQueueFamily);
 
+    int num_iterations = (precomputedWavelenghts + 2) / 3;
+    double dlambda = (kLambdaMax - kLambdaMin) / (3 * num_iterations);
+    for (int i = 0; i < num_iterations; ++i)
+    {
+        vsg::vec3 lambdas(
+                kLambdaMin + (3 * i + 0.5) * dlambda,
+                kLambdaMin + (3 * i + 1.5) * dlambda,
+                kLambdaMin + (3 * i + 2.5) * dlambda);
+
+        auto coeff = [dlambda](double lambda, int component)
+        {
+            // Note that we don't include MAX_LUMINOUS_EFFICACY here, to avoid
+            // artefacts due to too large values when using half precision on GPU.
+            // We add this term back in kAtmosphereShader, via
+            // SKY_SPECTRAL_RADIANCE_TO_LUMINANCE (see also the comments in the
+            // Model constructor).
+            double x = cieColorMatchingFunctionTableValue(lambda, 1);
+            double y = cieColorMatchingFunctionTableValue(lambda, 2);
+            double z = cieColorMatchingFunctionTableValue(lambda, 3);
+            return static_cast<float>((
+                XYZ_TO_SRGB[component * 3] * x +
+                XYZ_TO_SRGB[component * 3 + 1] * y +
+                XYZ_TO_SRGB[component * 3 + 2] * z) * dlambda);
+        };
+        vsg::mat4 luminance_from_radiance{
+                  coeff(lambdas[0], 0), coeff(lambdas[0], 1), coeff(lambdas[0], 2), 0.0f,
+                  coeff(lambdas[1], 0), coeff(lambdas[1], 1), coeff(lambdas[1], 2), 0.0f,
+                  coeff(lambdas[2], 0), coeff(lambdas[2], 1), coeff(lambdas[2], 2), 0.0f,
+                  0.0, 0.0f, 0.0f, 1.0f};
+
+        lfr->set(luminance_from_radiance);
+        computeParameters(parameters, lambdas);
+
+        lfrBuffer->copyDataListToBuffers();
+        parametersBuffer->copyDataListToBuffers();
+
+        vsg::submitCommandsToQueue(context->commandPool, fence, 100000000000, computeQueue, [&](vsg::CommandBuffer& commandBuffer) {
+            bindParameters->record(commandBuffer);
+            singlePass->record(commandBuffer);
+        });
+
+        // Compute the 2nd, 3rd and 4th orderValue of scattering, in sequence.
+        for (int o = 2; o <= scatteringOrders; ++o)
+        {
+            order->set(o);
+            orderBuffer->copyDataListToBuffers();
+
+            vsg::submitCommandsToQueue(context->commandPool, fence, 100000000000, computeQueue, [&](vsg::CommandBuffer& commandBuffer) {
+                bindParameters->record(commandBuffer);
+                bindOrder->record(commandBuffer);
+                multipleScattering->record(commandBuffer);
+            });
+        }
+    }
+
+    lfr->set(vsg::mat4());
+    computeParameters(parameters, {kLambdaR, kLambdaG, kLambdaB});
+
+    lfrBuffer->copyDataListToBuffers();
+    parametersBuffer->copyDataListToBuffers();
+
     vsg::submitCommandsToQueue(context->commandPool, fence, 100000000000, computeQueue, [&](vsg::CommandBuffer& commandBuffer) {
-        commandGraph->record(commandBuffer);
+        bindParameters->record(commandBuffer);
+        transmittanceCommands->record(commandBuffer);
     });
+
+
     /*
     transmittanceData = mapData(_transmittanceTexture->imageView, transmittanceWidth, transmittanceHeight);
     scatteringData = mapData(_scatteringTextureSndOrder->imageView, scatteringWidth(), scatteringWidth(), scatteringDepth());
@@ -190,13 +245,41 @@ void AtmosphereModel::initialize(int scatteringOrders)
     */
 }
 
-vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings> > settings)
+vsg::vec3 AtmosphereModel::convertSpectrumToLinearSrgb(double c)
+{
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+    const int dlambda = 1;
+    for (int lambda = kLambdaMin; lambda < kLambdaMax; lambda += dlambda) {
+      double value = interpolate(waveLengths, solarIrradiance, lambda);
+      x += cieColorMatchingFunctionTableValue(lambda, 1) * value;
+      y += cieColorMatchingFunctionTableValue(lambda, 2) * value;
+      z += cieColorMatchingFunctionTableValue(lambda, 3) * value;
+    }
+    auto r = MAX_LUMINOUS_EFFICACY *
+        (XYZ_TO_SRGB[0] * x + XYZ_TO_SRGB[1] * y + XYZ_TO_SRGB[2] * z) * dlambda;
+    auto g = MAX_LUMINOUS_EFFICACY *
+        (XYZ_TO_SRGB[3] * x + XYZ_TO_SRGB[4] * y + XYZ_TO_SRGB[5] * z) * dlambda;
+    auto b = MAX_LUMINOUS_EFFICACY *
+        (XYZ_TO_SRGB[6] * x + XYZ_TO_SRGB[7] * y + XYZ_TO_SRGB[8] * z) * dlambda;
+
+    double white_point = (r + g + b) / c;
+
+    r /= white_point;
+    g /= white_point;
+    b /= white_point;
+
+    return {static_cast<float>(r), static_cast<float>(g), static_cast<float>(b)};
+}
+
+vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::vec4Value> camera)
 {
     auto computeShader = vsg::ShaderStage::read(VK_SHADER_STAGE_COMPUTE_BIT, "main", "shaders/scattering/reflection_map.glsl", _options);
     computeShader->module->hints = compileSettings;
 
     assignRenderConstants();
-    computeShader->specializationConstants = _constants;
+    computeShader->specializationConstants = _renderConstants;
 
     // binding 0 source buffer
     // binding 1 image2d
@@ -209,6 +292,7 @@ vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {6, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}
     };
     auto descriptorSetLayout = vsg::DescriptorSetLayout::create(descriptorBindings);
 
@@ -217,12 +301,13 @@ vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr
     auto irradianceTexture = vsg::DescriptorImage::create(_irradianceTexture, 2, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     auto scatteringTexture = vsg::DescriptorImage::create(_scatteringTexture, 3, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     auto singleMieTexture = vsg::DescriptorImage::create(_singleMieScatteringTexture, 4, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    auto cameraBuffer = vsg::DescriptorBuffer::create(camera, 6, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
     auto cubemap = vsg::DescriptorImage::create(_cubeMap, 5, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
     auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{descriptorSetLayout}, vsg::PushConstantRanges{});
 
-    vsg::Descriptors descriptors{settingsBuffer, transmittanceTexture, irradianceTexture, scatteringTexture, singleMieTexture, cubemap};
+    vsg::Descriptors descriptors{settingsBuffer, transmittanceTexture, irradianceTexture, scatteringTexture, singleMieTexture, cubemap, cameraBuffer};
     auto descriptorSet = vsg::DescriptorSet::create(descriptorSetLayout, descriptors);
     auto bindDescriptorSet = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, descriptorSet);
 
@@ -273,6 +358,136 @@ vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr
     compute_commandGraph->addChild(postCopyBarrierCmd);
 
     return compute_commandGraph;
+}
+
+vsg::ref_ptr<vsg::Node> AtmosphereModel::createSkyBox()
+{
+    auto vertexShader = vsg::ShaderStage::read(VK_SHADER_STAGE_VERTEX_BIT, "main", "shaders/scattering/cubemap_vs.glsl", _options);
+    auto fragmentShader = vsg::ShaderStage::read(VK_SHADER_STAGE_FRAGMENT_BIT, "main", "shaders/scattering/cubemap_fs.glsl", _options);
+    const vsg::ShaderStages shaders{vertexShader, fragmentShader};
+
+    // set up graphics pipeline
+    vsg::DescriptorSetLayoutBindings descriptorBindings{
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
+    };
+    auto descriptorSetLayout = vsg::DescriptorSetLayout::create(descriptorBindings);
+
+
+    vsg::PushConstantRanges pushConstantRanges{
+        {VK_SHADER_STAGE_VERTEX_BIT, 0, 128} // projection view, and model matrices, actual push constant calls automatically provided by the VSG's DispatchTraversal
+    };
+
+    vsg::VertexInputState::Bindings vertexBindingsDescriptions{
+        VkVertexInputBindingDescription{0, sizeof(vsg::vec3), VK_VERTEX_INPUT_RATE_VERTEX}};
+
+    vsg::VertexInputState::Attributes vertexAttributeDescriptions{
+        VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}};
+
+    auto rasterState = vsg::RasterizationState::create();
+    rasterState->cullMode = VK_CULL_MODE_FRONT_BIT;
+
+    auto depthState = vsg::DepthStencilState::create();
+    depthState->depthTestEnable = VK_TRUE;
+    depthState->depthWriteEnable = VK_FALSE;
+    depthState->depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    auto colorBlendState = vsg::ColorBlendState::create();
+    colorBlendState->attachments = vsg::ColorBlendState::ColorBlendAttachments{
+            {true, VK_BLEND_FACTOR_SRC_COLOR, VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_OP_SUBTRACT, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT}};
+
+
+    vsg::GraphicsPipelineStates pipelineStates{
+        vsg::VertexInputState::create(vertexBindingsDescriptions, vertexAttributeDescriptions),
+        vsg::InputAssemblyState::create(),
+        rasterState,
+        vsg::MultisampleState::create(),
+        colorBlendState,
+        depthState};
+
+    auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{descriptorSetLayout}, pushConstantRanges);
+    auto pipeline = vsg::GraphicsPipeline::create(pipelineLayout, shaders, pipelineStates);
+    auto bindGraphicsPipeline = vsg::BindGraphicsPipeline::create(pipeline);
+
+    // create texture image and associated DescriptorSets and binding
+    //auto sampler = vsg::Sampler::create();
+    //sampler->maxLod = _cubeMap->imageView->image->data->properties.maxNumMipmaps;
+
+    auto root = vsg::Commands::create();
+    root->addChild(bindGraphicsPipeline);
+
+    auto texture = vsg::DescriptorImage::create(_cubeMap, 0, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    auto descriptorSet = vsg::DescriptorSet::create(descriptorSetLayout, vsg::Descriptors{texture});
+    auto bindDescriptorSet = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, descriptorSet);
+    root->addChild(bindDescriptorSet);
+
+    auto vertices = vsg::vec3Array::create({// Back
+                                            {-1.0f, -1.0f, -1.0f},
+                                            {1.0f, -1.0f, -1.0f},
+                                            {-1.0f, 1.0f, -1.0f},
+                                            {1.0f, 1.0f, -1.0f},
+
+                                            // Front
+                                            {-1.0f, -1.0f, 1.0f},
+                                            {1.0f, -1.0f, 1.0f},
+                                            {-1.0f, 1.0f, 1.0f},
+                                            {1.0f, 1.0f, 1.0f},
+
+                                            // Left
+                                            {-1.0f, -1.0f, -1.0f},
+                                            {-1.0f, -1.0f, 1.0f},
+                                            {-1.0f, 1.0f, -1.0f},
+                                            {-1.0f, 1.0f, 1.0f},
+
+                                            // Right
+                                            {1.0f, -1.0f, -1.0f},
+                                            {1.0f, -1.0f, 1.0f},
+                                            {1.0f, 1.0f, -1.0f},
+                                            {1.0f, 1.0f, 1.0f},
+
+                                            // Bottom
+                                            {-1.0f, -1.0f, -1.0f},
+                                            {-1.0f, -1.0f, 1.0f},
+                                            {1.0f, -1.0f, -1.0f},
+                                            {1.0f, -1.0f, 1.0f},
+
+                                            // Top
+                                            {-1.0f, 1.0f, -1.0f},
+                                            {-1.0f, 1.0f, 1.0f},
+                                            {1.0f, 1.0f, -1.0f},
+                                            {1.0f, 1.0f, 1.0}});
+
+    auto indices = vsg::ushortArray::create({// Back
+                                             0, 2, 1,
+                                             1, 2, 3,
+
+                                             // Front
+                                             6, 4, 5,
+                                             7, 6, 5,
+
+                                             // Left
+                                             10, 8, 9,
+                                             11, 10, 9,
+
+                                             // Right
+                                             14, 13, 12,
+                                             15, 13, 14,
+
+                                             // Bottom
+                                             17, 16, 19,
+                                             19, 16, 18,
+
+                                             // Top
+                                             23, 20, 21,
+                                             22, 20, 23});
+
+    root->addChild(vsg::BindVertexBuffers::create(0, vsg::DataList{vertices}));
+    root->addChild(vsg::BindIndexBuffer::create(indices));
+    root->addChild(vsg::DrawIndexed::create(indices->size(), 1, 0, 0, 0));
+
+    auto xform = vsg::MatrixTransform::create(vsg::rotate(vsg::PI, 0.0, 1.0, 0.0));
+    xform->addChild(root);
+
+    return xform;
 }
 
 void AtmosphereModel::generateTextures()
@@ -364,7 +579,7 @@ vsg::ref_ptr<vsg::BindComputePipeline> AtmosphereModel::bindCompute(const vsg::P
 {
     auto computeStage = vsg::ShaderStage::read(VK_SHADER_STAGE_COMPUTE_BIT, "main", filename, _options);
     computeStage->module->hints = compileSettings;
-    computeStage->specializationConstants = _constants;
+    computeStage->specializationConstants = _computeConstants;
 
     // set up the compute pipeline
     auto pipeline = vsg::ComputePipeline::create(pipelineLayout, computeStage);
@@ -453,19 +668,18 @@ vsg::ref_ptr<vsg::DescriptorSet> AtmosphereModel::bindIndirectIrradiance() const
     vsg::DescriptorSetLayoutBindings descriptorBindings{
         {0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        {2, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
         {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        {5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
     };
     auto descriptorSetLayout = vsg::DescriptorSetLayout::create(descriptorBindings);
 
     auto deltaIrradianceTexture = vsg::DescriptorImage::create(_deltaIrradianceTexture, 0, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
     auto irradianceTexture = vsg::DescriptorImage::create(_irradianceTexture, 1, 0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 
-    auto singleTexture = vsg::DescriptorImage::create(_deltaRayleighScatteringTexture, 3, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    auto mieTexture = vsg::DescriptorImage::create(_deltaMieScatteringTexture, 4, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    auto multipleTexture = vsg::DescriptorImage::create(_deltaMultipleScatteringTexture, 5, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    auto singleTexture = vsg::DescriptorImage::create(_deltaRayleighScatteringTexture, 2, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    auto mieTexture = vsg::DescriptorImage::create(_deltaMieScatteringTexture, 3, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    auto multipleTexture = vsg::DescriptorImage::create(_deltaMultipleScatteringTexture, 4, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
     //auto orderValueBuffer = vsg::DescriptorBuffer::create(orderValue, 6);
 
@@ -496,28 +710,40 @@ vsg::ref_ptr<vsg::DescriptorSet> AtmosphereModel::bindMultipleScattering() const
     return vsg::DescriptorSet::create(descriptorSetLayout, descriptors);
 }
 
-vsg::ref_ptr<vsg::DescriptorSet> AtmosphereModel::bindLuminanceFromRadiance(const vsg::mat4& value, const vsg::vec3& lambdas) const
+void AtmosphereModel::computeParameters(vsg::ref_ptr<vsg::Value<Parameters>> parameters, const vsg::vec3 &lambdas) const
+{
+    Parameters p;
+    p.solar_irradiance = toVector(waveLengths, solarIrradiance, lambdas, 1.0);
+    p.rayleigh_scattering = toVector(waveLengths, rayleighScattering, lambdas, lengthUnitInMeters);
+    p.mie_scattering = toVector(waveLengths, mieScattering, lambdas, lengthUnitInMeters);
+    p.mie_extinction = toVector(waveLengths, mieExtinction, lambdas, lengthUnitInMeters);
+    p.absorption_extinction = toVector(waveLengths, absorptionExtinction, lambdas, lengthUnitInMeters);
+    p.ground_albedo = toVector(waveLengths, groundAlbedo, lambdas, 1.0);
+
+    parameters->set(p);
+}
+/*
+vsg::ref_ptr<vsg::DescriptorSet> AtmosphereModel::bindParameters(vsg::ref_ptr<vsg::mat4Value> value,
+                                                                 vsg::ref_ptr<vsg::Value<Parameters>> parameters,
+                                                                 vsg::Array<DensityProfileLayer> profiles,
+                                                                 vsg::ref_ptr<vsg::DescriptorSetLayout> dsl) const
+{
+    auto matrix = vsg::DescriptorBuffer::create(value, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    auto parametersValue = vsg::DescriptorBuffer::create(parameters, 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    auto proflesArray = vsg::DescriptorBuffer::create(profiles, 2, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+
+    vsg::Descriptors descriptors{matrix, parametersValue, proflesArray};
+    return vsg::DescriptorSet::create(dsl, descriptors);
+}*/
+vsg::ref_ptr<vsg::DescriptorSetLayout> AtmosphereModel::parametersLayout() const
 {
     // set up DescriptorSetLayout, DecriptorSet and BindDescriptorSets
     vsg::DescriptorSetLayoutBindings descriptorBindings{
         {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
-        {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}
+        {1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
     };
-    auto descriptorSetLayout = vsg::DescriptorSetLayout::create(descriptorBindings);
-
-    Params params;
-    params.solar_irradiance = toVector(waveLengths, solarIrradiance, lambdas, 1.0);
-    params.rayleigh_scattering = toVector(waveLengths, rayleighScattering, lambdas, lengthUnitInMeters);
-    params.mie_scattering = toVector(waveLengths, mieScattering, lambdas, lengthUnitInMeters);
-    params.mie_extinction = toVector(waveLengths, mieExtinction, lambdas, lengthUnitInMeters);
-    params.absorption_extinction = toVector(waveLengths, absorptionExtinction, lambdas, lengthUnitInMeters);
-    params.ground_albedo = toVector(waveLengths, groundAlbedo, lambdas, 1.0);
-
-    auto matrix = vsg::DescriptorBuffer::create(vsg::mat4Value::create(value), 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    auto buffer = vsg::DescriptorBuffer::create(vsg::Value<Params>::create(params), 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-
-    vsg::Descriptors descriptors{matrix, buffer};
-    return vsg::DescriptorSet::create(descriptorSetLayout, descriptors);
+    return vsg::DescriptorSetLayout::create(descriptorBindings);
 }
 
 vsg::ref_ptr<vsg::DescriptorSetLayout> AtmosphereModel::orderLayout() const
@@ -528,74 +754,10 @@ vsg::ref_ptr<vsg::DescriptorSetLayout> AtmosphereModel::orderLayout() const
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------
-/*
-void AtmosphereModel::bind_rendering_uniforms(dw::Program* program)
+
+void AtmosphereModel::assignComputeConstants()
 {
-    if (program->set_uniform("transmittance_texture", 0))
-        m_transmittance_texture->bind(0);
-
-    if (program->set_uniform("scattering_texture", 1))
-        m_scattering_texture->bind(1);
-
-    if (program->set_uniform("irradiance_texture", 2))
-        m_irradiance_texture->bind(2);
-
-    if (!m_combine_scattering_textures)
-    {
-        if (program->set_uniform("single_mie_scattering_texture", 3))
-            m_optional_single_mie_scattering_texture->bind(3);
-    }
-
-    program->set_uniform("TRANSMITTANCE_TEXTURE_WIDTH", CONSTANTS::TRANSMITTANCE_WIDTH);
-    program->set_uniform("TRANSMITTANCE_TEXTURE_HEIGHT", CONSTANTS::TRANSMITTANCE_HEIGHT);
-    program->set_uniform("SCATTERING_TEXTURE_R_SIZE", CONSTANTS::SCATTERING_R);
-    program->set_uniform("SCATTERING_TEXTURE_MU_SIZE", CONSTANTS::SCATTERING_MU);
-    program->set_uniform("SCATTERING_TEXTURE_MU_S_SIZE", CONSTANTS::SCATTERING_MU_S);
-    program->set_uniform("SCATTERING_TEXTURE_NU_SIZE", CONSTANTS::SCATTERING_NU);
-    program->set_uniform("SCATTERING_TEXTURE_WIDTH", CONSTANTS::SCATTERING_WIDTH);
-    program->set_uniform("SCATTERING_TEXTURE_HEIGHT", CONSTANTS::SCATTERING_HEIGHT);
-    program->set_uniform("SCATTERING_TEXTURE_DEPTH", CONSTANTS::SCATTERING_DEPTH);
-    program->set_uniform("IRRADIANCE_TEXTURE_WIDTH", CONSTANTS::IRRADIANCE_WIDTH);
-    program->set_uniform("IRRADIANCE_TEXTURE_HEIGHT", CONSTANTS::IRRADIANCE_HEIGHT);
-
-    program->set_uniform("sun_angular_radius", (float)m_sun_angular_radius);
-    program->set_uniform("bottom_radius", (float)(m_bottom_radius/ m_length_unit_in_meters));
-    program->set_uniform("top_radius", (float)(m_top_radius / m_length_unit_in_meters));
-    program->set_uniform("mie_phase_function_g", (float)m_mie_phase_function_g);
-    program->set_uniform("mu_s_min", (float)cos(m_max_sun_zenith_angle));
-
-    glm::vec3 sky_spectral_radiance_to_luminance, sun_spectral_radiance_to_luminance;
-    sky_sun_radiance_to_luminance(sky_spectral_radiance_to_luminance, sun_spectral_radiance_to_luminance);
-
-    program->set_uniform("SKY_SPECTRAL_RADIANCE_TO_LUMINANCE", sky_spectral_radiance_to_luminance);
-    program->set_uniform("SUN_SPECTRAL_RADIANCE_TO_LUMINANCE", sun_spectral_radiance_to_luminance);
-
-    double lambdas[] = { kLambdaR, kLambdaG, kLambdaB };
-
-    glm::vec3 solar_irradiance = to_vector(m_wave_lengths, m_solar_irradiance, lambdas, 1.0);
-    program->set_uniform("solar_irradiance", solar_irradiance);
-
-    glm::vec3 rayleigh_scattering = to_vector(m_wave_lengths, m_rayleigh_scattering, lambdas, m_length_unit_in_meters);
-    program->set_uniform("rayleigh_scattering", rayleigh_scattering);
-
-    glm::vec3 mie_scattering = to_vector(m_wave_lengths, m_mie_scattering, lambdas, m_length_unit_in_meters);
-    program->set_uniform("mie_scattering", mie_scattering);
-}
-*/
-// -----------------------------------------------------------------------------------------------------------------------------------
-
-void AtmosphereModel::setupShaderConstants()
-{
-    vsg::vec3 lambdas(kLambdaR, kLambdaG, kLambdaB);
-
-    auto solar_irradiance = toVector(waveLengths, solarIrradiance, lambdas, 1.0);
-    auto rayleigh_scattering = toVector(waveLengths, rayleighScattering, lambdas, lengthUnitInMeters);
-    auto mie_scattering = toVector(waveLengths, mieScattering, lambdas, lengthUnitInMeters);
-    auto mie_extinction = toVector(waveLengths, mieExtinction, lambdas, lengthUnitInMeters);
-    auto absorption_extinction = toVector(waveLengths, absorptionExtinction, lambdas, lengthUnitInMeters);
-    auto ground_albedo = toVector(waveLengths, groundAlbedo, lambdas, 1.0);
-
-    _constants = {
+    _computeConstants = {
         {0, vsg::intValue::create(numThreads)},
         {1, vsg::intValue::create(numViewerThreads)},
         {2, vsg::intValue::create(cubeSize)},
@@ -611,44 +773,12 @@ void AtmosphereModel::setupShaderConstants()
         {16, vsg::intValue::create(irradianceWidth)},
         {17, vsg::intValue::create(irradianceHeight)},
 
-        {18, vsg::floatValue::create(rayleigh_scattering.x)},
-        {19, vsg::floatValue::create(rayleigh_scattering.y)},
-        {20, vsg::floatValue::create(rayleigh_scattering.z)},
-
-        {21, vsg::floatValue::create(mie_scattering.x)},
-        {22, vsg::floatValue::create(mie_scattering.y)},
-        {23, vsg::floatValue::create(mie_scattering.z)},
-
-        {24, vsg::floatValue::create(absorption_extinction.x)},
-        {25, vsg::floatValue::create(absorption_extinction.y)},
-        {26, vsg::floatValue::create(absorption_extinction.z)},
-
-        {27, vsg::floatValue::create(solar_irradiance.x)},
-        {28, vsg::floatValue::create(solar_irradiance.y)},
-        {29, vsg::floatValue::create(solar_irradiance.z)},
-
-        {30, vsg::floatValue::create(mie_extinction.x)},
-        {31, vsg::floatValue::create(mie_extinction.y)},
-        {32, vsg::floatValue::create(mie_extinction.z)},
-
-        {33, vsg::floatValue::create(ground_albedo.x)},
-        {34, vsg::floatValue::create(ground_albedo.y)},
-        {35, vsg::floatValue::create(ground_albedo.z)},
-
         {36, vsg::floatValue::create(static_cast<float>(sunAngularRadius))},
         {37, vsg::floatValue::create(static_cast<float>(bottomRadius / lengthUnitInMeters))},
         {38, vsg::floatValue::create(static_cast<float>(topRadius / lengthUnitInMeters))},
         {39, vsg::floatValue::create(static_cast<float>(miePhaseFunction_g))},
-        {40, vsg::floatValue::create(static_cast<float>(std::cos(maxSunZenithAngle)))},
+        {40, vsg::floatValue::create(static_cast<float>(std::cos(maxSunZenithAngle)))}
 /*
-        {41, vsg::floatValue::create(SKY_SPECTRAL_RADIANCE_TO_LUMINANCE.x)},
-        {42, vsg::floatValue::create(SKY_SPECTRAL_RADIANCE_TO_LUMINANCE.y)},
-        {43, vsg::floatValue::create(SKY_SPECTRAL_RADIANCE_TO_LUMINANCE.z)},
-
-        {44, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.x)},
-        {45, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.y)},
-        {46, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.z)},
-*/
         {47, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.width / lengthUnitInMeters))},
         {48, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_term))},
         {49, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_scale * lengthUnitInMeters))},
@@ -672,6 +802,7 @@ void AtmosphereModel::setupShaderConstants()
         {64, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.exp_scale * lengthUnitInMeters))},
         {65, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.linear_term * lengthUnitInMeters))},
         {66, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.constant_term))}
+*/
     };
 }
 
@@ -689,7 +820,7 @@ void AtmosphereModel::assignRenderConstants()
     auto absorption_extinction = toVector(waveLengths, absorptionExtinction, lambdas, lengthUnitInMeters);
     auto ground_albedo = toVector(waveLengths, groundAlbedo, lambdas, 1.0);
 
-    _constants = {
+    _renderConstants = {
         {0, vsg::intValue::create(numThreads)},
         {1, vsg::intValue::create(numViewerThreads)},
         {2, vsg::intValue::create(cubeSize)},
@@ -741,31 +872,7 @@ void AtmosphereModel::assignRenderConstants()
 
         {44, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.x)},
         {45, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.y)},
-        {46, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.z)},
-
-        {47, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.width / lengthUnitInMeters))},
-        {48, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_term))},
-        {49, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_scale * lengthUnitInMeters))},
-        {50, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.linear_term * lengthUnitInMeters))},
-        {51, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.constant_term))},
-
-        {52, vsg::floatValue::create(static_cast<float>(mieDensityLayer.width / lengthUnitInMeters))},
-        {53, vsg::floatValue::create(static_cast<float>(mieDensityLayer.exp_term))},
-        {54, vsg::floatValue::create(static_cast<float>(mieDensityLayer.exp_scale * lengthUnitInMeters))},
-        {55, vsg::floatValue::create(static_cast<float>(mieDensityLayer.linear_term * lengthUnitInMeters))},
-        {56, vsg::floatValue::create(static_cast<float>(mieDensityLayer.constant_term))},
-
-        {57, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.width / lengthUnitInMeters))},
-        {58, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.exp_term))},
-        {59, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.exp_scale * lengthUnitInMeters))},
-        {60, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.linear_term * lengthUnitInMeters))},
-        {61, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.constant_term))},
-
-        {62, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.width / lengthUnitInMeters))},
-        {63, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.exp_term))},
-        {64, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.exp_scale * lengthUnitInMeters))},
-        {65, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.linear_term * lengthUnitInMeters))},
-        {66, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.constant_term))}
+        {46, vsg::floatValue::create(SUN_SPECTRAL_RADIANCE_TO_LUMINANCE.z)}
     };
 
 }
@@ -785,207 +892,5 @@ vsg::ref_ptr<vsg::Data> AtmosphereModel::mapData(vsg::ref_ptr<vsg::ImageView> vi
 
     return vsg::MappedData<vsg::vec4Array3D>::create(buffer, offset, 0, vsg::Data::Properties{VK_FORMAT_R32G32B32A32_SFLOAT}, width, height, depth);
 }
-
-// -----------------------------------------------------------------------------------------------------------------------------------
-/*
-void AtmosphereModel::bind_density_layer(dw::Program* program, DensityProfileLayer* layer)
-{
-    program->set_uniform(layer->name + "_width", (float)(layer->width / m_length_unit_in_meters));
-    program->set_uniform(layer->name + "_exp_term", (float)layer->exp_term);
-    program->set_uniform(layer->name + "_exp_scale", (float)(layer->exp_scale * m_length_unit_in_meters));
-    program->set_uniform(layer->name + "_linear_term", (float)(layer->linear_term * m_length_unit_in_meters));
-    program->set_uniform(layer->name + "_constant_term", (float)layer->constant_term);
-}
-
-
-void AtmosphereModel::precompute(TextureBuffer* buffer, double* lambdas, double* luminance_from_radiance, bool blend, int num_scattering_orderValues)
-{
-    int BLEND = blend ? 1 : 0;
-    int NUM_THREADS = CONSTANTS::NUM_THREADS;
-
-    // ------------------------------------------------------------------
-    // Compute Transmittance
-    // ------------------------------------------------------------------
-
-    m_transmittance_program->use();
-
-    bind_compute_uniforms(m_transmittance_program, lambdas, luminance_from_radiance);
-
-    // Compute the transmittance, and store it in transmittance_texture
-    buffer->m_transmittance_array[WRITE]->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_transmittance_array[WRITE]->internal_format());
-
-    m_transmittance_program->set_uniform("blend", glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
-
-    GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::TRANSMITTANCE_WIDTH / NUM_THREADS, CONSTANTS::TRANSMITTANCE_HEIGHT / NUM_THREADS, 1));
-    GL_CHECK_ERROR(glFinish());
-
-    swap(buffer->m_transmittance_array);
-
-    // ------------------------------------------------------------------
-    // Compute Direct Irradiance
-    // ------------------------------------------------------------------
-
-    m_direct_irradiance_program->use();
-
-    bind_compute_uniforms(m_direct_irradiance_program, lambdas, luminance_from_radiance);
-
-    // Compute the direct irradiance, store it in delta_irradiance_texture and,
-    // depending on 'blend', either initialize irradiance_texture_ with zeros or
-    // leave it unchanged (we don't want the direct irradiance in
-    // irradiance_texture_, but only the irradiance from the sky).
-    buffer->m_irradiance_array[READ]->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_irradiance_array[READ]->internal_format());
-    buffer->m_irradiance_array[WRITE]->bind_image(1, 0, 0, GL_READ_WRITE, buffer->m_irradiance_array[WRITE]->internal_format());
-    buffer->m_delta_irradiance_texture->bind_image(2, 0, 0, GL_READ_WRITE, buffer->m_delta_irradiance_texture->internal_format());
-
-    if (m_direct_irradiance_program->set_uniform("transmittance", 3))
-        buffer->m_transmittance_array[READ]->bind(3);
-
-    m_direct_irradiance_program->set_uniform("blend", glm::vec4(0.0f, BLEND, 0.0f, 0.0f));
-
-    GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::IRRADIANCE_WIDTH / NUM_THREADS, CONSTANTS::IRRADIANCE_HEIGHT / NUM_THREADS, 1));
-    GL_CHECK_ERROR(glFinish());
-
-    swap(buffer->m_irradiance_array);
-
-    // ------------------------------------------------------------------
-    // Compute Single Scattering
-    // ------------------------------------------------------------------
-
-    m_single_scattering_program->use();
-
-    bind_compute_uniforms(m_single_scattering_program, lambdas, luminance_from_radiance);
-
-    // Compute the rayleigh and mie single scattering, store them in
-    // delta_rayleigh_scattering_texture and delta_mie_scattering_texture, and
-    // either store them or accumulate them in scattering_texture_ and
-    // optional_single_mie_scattering_texture_.
-    buffer->m_delta_rayleigh_scattering_texture->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_delta_rayleigh_scattering_texture->internal_format());
-    buffer->m_delta_mie_scattering_texture->bind_image(1, 0, 0, GL_READ_WRITE, buffer->m_delta_mie_scattering_texture->internal_format());
-    buffer->m_scattering_array[READ]->bind_image(2, 0, 0, GL_READ_WRITE, buffer->m_scattering_array[READ]->internal_format());
-    buffer->m_scattering_array[WRITE]->bind_image(3, 0, 0, GL_READ_WRITE, buffer->m_scattering_array[WRITE]->internal_format());
-    buffer->m_optional_single_mie_scattering_array[READ]->bind_image(4, 0, 0, GL_READ_WRITE, buffer->m_optional_single_mie_scattering_array[READ]->internal_format());
-    buffer->m_optional_single_mie_scattering_array[WRITE]->bind_image(5, 0, 0, GL_READ_WRITE, buffer->m_optional_single_mie_scattering_array[WRITE]->internal_format());
-
-    if (m_single_scattering_program->set_uniform("transmittance", 6))
-        buffer->m_transmittance_array[READ]->bind(6);
-
-    m_single_scattering_program->set_uniform("blend", glm::vec4(0.0f, 0.0f, BLEND, BLEND));
-
-    for (int layer = 0; layer < CONSTANTS::SCATTERING_DEPTH; ++layer)
-    {
-        m_single_scattering_program->set_uniform("layer", layer);
-
-        GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::SCATTERING_WIDTH / NUM_THREADS, CONSTANTS::SCATTERING_HEIGHT / NUM_THREADS, 1));
-        GL_CHECK_ERROR(glFinish());
-    }
-
-    swap(buffer->m_scattering_array);
-    swap(buffer->m_optional_single_mie_scattering_array);
-
-
-    // Compute the 2nd, 3rd and 4th orderValue of scattering, in sequence.
-    for (int scattering_orderValue = 2; scattering_orderValue <= num_scattering_orderValues; ++scattering_orderValue)
-    {
-        // ------------------------------------------------------------------
-        // Compute Scattering Density
-        // ------------------------------------------------------------------
-
-        m_scattering_density_program->use();
-
-        bind_compute_uniforms(m_scattering_density_program, lambdas, luminance_from_radiance);
-
-        // Compute the scattering density, and store it in
-        // delta_scattering_density_texture.
-        buffer->m_delta_scattering_density_texture->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_delta_scattering_density_texture->internal_format());
-
-        if (m_scattering_density_program->set_uniform("transmittance", 1))
-            buffer->m_transmittance_array[READ]->bind(1);
-
-        if (m_scattering_density_program->set_uniform("single_rayleigh_scattering", 2))
-            buffer->m_delta_rayleigh_scattering_texture->bind(2);
-
-        if (m_scattering_density_program->set_uniform("single_mie_scattering", 3))
-            buffer->m_delta_mie_scattering_texture->bind(3);
-
-        if (m_scattering_density_program->set_uniform("multiple_scattering", 4))
-            buffer->m_delta_multiple_scattering_texture->bind(4);
-
-        if (m_scattering_density_program->set_uniform("irradiance", 5))
-            buffer->m_delta_irradiance_texture->bind(5);
-
-        m_scattering_density_program->set_uniform("scattering_orderValue", scattering_orderValue);
-        m_scattering_density_program->set_uniform("blend", glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
-
-        for (int layer = 0; layer < CONSTANTS::SCATTERING_DEPTH; ++layer)
-        {
-            m_scattering_density_program->set_uniform("layer", layer);
-            GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::SCATTERING_WIDTH / NUM_THREADS, CONSTANTS::SCATTERING_HEIGHT / NUM_THREADS, 1));
-            GL_CHECK_ERROR(glFinish());
-        }
-
-        // ------------------------------------------------------------------
-        // Compute Indirect Irradiance
-        // ------------------------------------------------------------------
-
-        m_indirect_irradiance_program->use();
-
-        bind_compute_uniforms(m_indirect_irradiance_program, lambdas, luminance_from_radiance);
-
-        // Compute the indirect irradiance, store it in delta_irradiance_texture and
-        // accumulate it in irradiance_texture_.
-        buffer->m_delta_irradiance_texture->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_delta_irradiance_texture->internal_format());
-        buffer->m_irradiance_array[READ]->bind_image(1, 0, 0, GL_READ_WRITE, buffer->m_irradiance_array[READ]->internal_format());
-        buffer->m_irradiance_array[WRITE]->bind_image(2, 0, 0, GL_READ_WRITE, buffer->m_irradiance_array[WRITE]->internal_format());
-
-        if (m_indirect_irradiance_program->set_uniform("single_rayleigh_scattering", 3))
-            buffer->m_delta_rayleigh_scattering_texture->bind(3);
-
-        if (m_indirect_irradiance_program->set_uniform("single_mie_scattering", 4))
-            buffer->m_delta_mie_scattering_texture->bind(4);
-
-        if (m_indirect_irradiance_program->set_uniform("multiple_scattering", 5))
-            buffer->m_delta_multiple_scattering_texture->bind(5);
-
-        m_indirect_irradiance_program->set_uniform("scattering_orderValue", scattering_orderValue - 1);
-        m_indirect_irradiance_program->set_uniform("blend", glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
-
-        GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::IRRADIANCE_WIDTH / NUM_THREADS, CONSTANTS::IRRADIANCE_HEIGHT / NUM_THREADS, 1));
-        GL_CHECK_ERROR(glFinish());
-
-        swap(buffer->m_irradiance_array);
-
-        // ------------------------------------------------------------------
-        // Compute Multiple Scattering
-        // ------------------------------------------------------------------
-
-        m_multiple_scattering_program->use();
-
-        bind_compute_uniforms(m_multiple_scattering_program, lambdas, luminance_from_radiance);
-
-        // Compute the multiple scattering, store it in
-        // delta_multiple_scattering_texture, and accumulate it in
-        // scattering_texture_.
-        buffer->m_delta_multiple_scattering_texture->bind_image(0, 0, 0, GL_READ_WRITE, buffer->m_delta_multiple_scattering_texture->internal_format());
-        buffer->m_scattering_array[READ]->bind_image(1, 0, 0, GL_READ_WRITE, buffer->m_scattering_array[READ]->internal_format());
-        buffer->m_scattering_array[WRITE]->bind_image(2, 0, 0, GL_READ_WRITE, buffer->m_scattering_array[WRITE]->internal_format());
-
-        if (m_multiple_scattering_program->set_uniform("transmittance", 3))
-            buffer->m_transmittance_array[READ]->bind(3);
-
-        if (m_multiple_scattering_program->set_uniform("delta_scattering_density", 4))
-            buffer->m_delta_scattering_density_texture->bind(4);
-
-        m_multiple_scattering_program->set_uniform("blend", glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
-
-        for (int layer = 0; layer < CONSTANTS::SCATTERING_DEPTH; ++layer)
-        {
-            m_multiple_scattering_program->set_uniform("layer", layer);
-            GL_CHECK_ERROR(glDispatchCompute(CONSTANTS::SCATTERING_WIDTH / NUM_THREADS, CONSTANTS::SCATTERING_HEIGHT / NUM_THREADS, 1));
-            GL_CHECK_ERROR(glFinish());
-        }
-
-        swap(buffer->m_scattering_array);
-    }
-}*/
 
 }

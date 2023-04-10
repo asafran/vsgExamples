@@ -11,7 +11,7 @@
 
 #include "atmosphere.h"
 
-vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::Options> options)
+vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::EllipsoidModel> eps, vsg::ref_ptr<vsg::Options> options)
 {
     // Values from "Reference Solar Spectral Irradiance: ASTM G-173", ETR column
     // (see http://rredc.nrel.gov/solar/spectra/am1.5/ASTMG173/ASTMG173.html),
@@ -50,8 +50,8 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     // Wavelength independent solar irradiance "spectrum" (not physically
     // realistic, but was used in the original implementation).
     constexpr double kConstantSolarIrradiance = 1.5;
-    constexpr double kBottomRadius = 6360000.0;
-    constexpr double kTopRadius = 6420000.0;
+    double kBottomRadius = eps->radiusEquator();
+    double kTopRadius = kBottomRadius + 100000.0;
     constexpr double kRayleigh = 1.24062e-6;
     constexpr double kRayleighScaleHeight = 8000.0;
     constexpr double kMieScaleHeight = 1200.0;
@@ -62,8 +62,8 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     constexpr double kGroundAlbedo = 0.1;
     const double max_sun_zenith_angle = 120.0 / 180.0 * vsg::PI;
 
-    atmosphere::DensityProfileLayer rayleigh_layer{0.0, 1.0, -1.0 / kRayleighScaleHeight, 0.0, 0.0};
-    atmosphere::DensityProfileLayer mie_layer{0.0f, 1.0f, -1.0f / kMieScaleHeight, 0.0f, 0.0f};
+    atmosphere::DensityProfileLayer rayleigh_layer(0.0, 1.0, -1.0 / kRayleighScaleHeight, 0.0, 0.0, 1000.0);
+    atmosphere::DensityProfileLayer mie_layer(0.0f, 1.0f, -1.0f / kMieScaleHeight, 0.0f, 0.0f, 1000.0);
 
     // Density profile increasing linearly from 0 to 1 between 10 and 25km, and
     // decreasing linearly from 1 to 0 between 25 and 40km. This is an approximate
@@ -114,8 +114,8 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     model->mieScattering = mie_scattering;
     model->mieExtinction = mie_extinction;
     model->miePhaseFunction_g = kMiePhaseFunctionG;
-    model->absorptionDensityLayer0 = atmosphere::DensityProfileLayer{25000.0, 0.0, 0.0, 1.0 / 15000.0, -2.0 / 3.0};
-    model->absorptionDensityLayer1 = atmosphere::DensityProfileLayer{0.0, 0.0, 0.0, -1.0 / 15000.0, 8.0 / 3.0};
+    model->absorptionDensityLayer0 = atmosphere::DensityProfileLayer(25000.0, 0.0, 0.0, 1.0 / 15000.0, -2.0 / 3.0, 1000.0);
+    model->absorptionDensityLayer1 = atmosphere::DensityProfileLayer(0.0, 0.0, 0.0, -1.0 / 15000.0, 8.0 / 3.0, 1000.0);
     model->absorptionExtinction = absorption_extinction;
     model->groundAlbedo = ground_albedo;
     model->maxSunZenithAngle = max_sun_zenith_angle;
@@ -181,7 +181,13 @@ int main(int argc, char** argv)
         auto pathFilename = arguments.value(std::string(), "-p");
         auto loadLevels = arguments.value(0, "--load-levels");
         auto horizonMountainHeight = arguments.value(0.0, "--hmh");
+
         auto sunAngle = vsg::radians(arguments.value(0.0f, "--angle"));
+        auto exposure = arguments.value(1.0f, "--exposure");
+/*
+        uint32_t numOperationThreads = 0;
+        if (arguments.read("--ot", numOperationThreads)) options->operationThreads = vsg::OperationThreads::create(numOperationThreads);
+*/
         if (arguments.read("--rgb")) options->mapRGBtoRGBAHint = false;
 
         bool generateDebug = arguments.read({"--shader-debug-info", "--sdi"});
@@ -193,6 +199,34 @@ int main(int argc, char** argv)
         if (arguments.errors()) return arguments.writeErrorMessages(std::cerr);
 
         auto vsg_scene = vsg::Group::create();
+        auto phong = vsg::createPhongShaderSet(options);
+/*
+        auto colorBlendState = vsg::ColorBlendState::create();
+        colorBlendState->attachments = vsg::ColorBlendState::ColorBlendAttachments{
+                {true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_OP_SUBTRACT, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT}};
+
+
+        phong->defaultGraphicsPipelineStates.push_back(colorBlendState);
+*/
+
+        auto databaseSettings = vsg::createOpenStreetMapSettings(options);
+        databaseSettings->shaderSet = phong;
+        databaseSettings->lighting = true;
+
+        auto dirLight = vsg::DirectionalLight::create();
+        dirLight->direction = vsg::normalize(vsg::dvec3{0.0, std::sin(sunAngle + vsg::PIf), std::cos(sunAngle + vsg::PIf)});
+
+        auto ellipsoidModel = databaseSettings->ellipsoidModel = vsg::EllipsoidModel::create(vsg::WGS_84_RADIUS_EQUATOR, vsg::WGS_84_RADIUS_EQUATOR);
+
+        auto earth = vsg::TileDatabase::create();
+        earth->settings = databaseSettings;
+        earth->readDatabase(options);
+/*
+        auto depthSorted = vsg::DepthSorted::create();
+        depthSorted->child = earth;
+        depthSorted->bound = vsg::dsphere(0.0, 0.0, 0.0, ellipsoidModel->radiusEquator());
+*/
+        vsg_scene->addChild(earth);
 
         // create the viewer and assign window(s) to it
         auto viewer = vsg::Viewer::create();
@@ -210,44 +244,35 @@ int main(int argc, char** argv)
         vsg_scene->accept(computeBounds);
         vsg::dvec3 centre = (computeBounds.bounds.min + computeBounds.bounds.max) * 0.5;
         double radius = vsg::length(computeBounds.bounds.max - computeBounds.bounds.min) * 0.6;
-        double nearFarRatio = 0.001;
+        double nearFarRatio = 0.0001;
+
+        auto lat = 51.50151088842245;
+        auto lon = -0.14181489107549874;
 
         // set up the camera
-        auto lookAt = vsg::LookAt::create(centre + vsg::dvec3(0.0, -radius * 3.5, 0.0), centre, vsg::dvec3(0.0, 0.0, 1.0));
+        //auto lookAt = vsg::LookAt::create(centre + vsg::dvec3(0.0, -radius * 3.5, 0.0), centre, vsg::dvec3(0.0, 0.0, 1.0));
+/*
+        auto lookAt = vsg::LookAt::create();
+        lookAt->center = ellipsoidModel->convertLatLongAltitudeToECEF(vsg::dvec3(lat, lon, 0.0));
+        lookAt->up = vsg::normalize(lookAt->center);
+        lookAt->eye = ellipsoidModel->convertLatLongAltitudeToECEF(vsg::dvec3(lat - 0.001, lon, 20.0));
+*/
+        auto lookAt = vsg::LookAt::create();
+        lookAt->center = vsg::dvec3(0.0, 0.0, 0.0);
+        lookAt->up = vsg::dvec3(0.0, 1.0, 0.0);
+        lookAt->eye = vsg::dvec3(0.0, 0.0, -40000000.0);
 
-        vsg::ref_ptr<vsg::ProjectionMatrix> perspective;
-        auto ellipsoidModel = vsg_scene->getRefObject<vsg::EllipsoidModel>("EllipsoidModel");
-        if (ellipsoidModel)
-        {
-            perspective = vsg::EllipsoidPerspective::create(lookAt, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
-        }
-        else
-        {
-            perspective = vsg::Perspective::create(30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio * radius, radius * 4.5);
-        }
+        auto perspective = vsg::EllipsoidPerspective::create(lookAt, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
 
         auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(window->extent2D()));
 
         // add close handler to respond the close window button and pressing escape
         viewer->addEventHandler(vsg::CloseHandler::create(viewer));
 
-        if (pathFilename.empty())
-        {
-            viewer->addEventHandler(vsg::Trackball::create(camera, ellipsoidModel));
-        }
-        else
-        {
-            auto animationPath = vsg::read_cast<vsg::AnimationPath>(pathFilename, options);
-            if (!animationPath)
-            {
-                std::cout<<"Warning: unable to read animation path : "<<pathFilename<<std::endl;
-                return 1;
-            }
+        auto trackball = vsg::Trackball::create(camera, ellipsoidModel);
+        //trackball->addKeyViewpoint(vsg::KeySymbol('1'), , 2.0); // Grenwish Observatory
 
-            auto animationPathHandler = vsg::AnimationPathHandler::create(camera, animationPath, viewer->start_point());
-            animationPathHandler->printFrameStatsToConsole = true;
-            viewer->addEventHandler(animationPathHandler);
-        }
+        viewer->addEventHandler(trackball);
 
         // if required preload specific number of PagedLOD levels.
         if (loadLevels > 0)
@@ -262,24 +287,31 @@ int main(int argc, char** argv)
             std::cout << "No. of tiles loaded " << loadPagedLOD.numTiles << " in " << time << "ms." << std::endl;
         }
 
-        auto model = createAtmosphereModel(window, options);
+        auto model = createAtmosphereModel(window, ellipsoidModel, options);
         //model->compileSettings->generateDebugInfo = true;
 
-        atmosphere::RuntimeSettings settings;
-        settings.white_point_exp = {1.0, 1.0, 1.0, 10.0f};
-        settings.sun_direction = vsg::vec4(vsg::normalize(vsg::vec3{0.0, std::sin(sunAngle), std::cos(sunAngle)}), 0.0f);
-        settings.sun_size = vsg::vec2(std::tan(0.01935f), std::cos(0.01935f));
+        auto cameraPos = vsg::vec4Value::create(vsg::vec4(lookAt->eye / 1000.0, 0.0f));
+        cameraPos->properties.dataVariance = vsg::DYNAMIC_DATA;
 
-        auto value = vsg::Value<atmosphere::RuntimeSettings>::create(settings);
+        auto settings = vsg::Value<atmosphere::RuntimeSettings>::create();
+        settings->properties.dataVariance = vsg::DYNAMIC_DATA;
 
-        auto compute_commandGraph = model->createCubeMapGraph(value);
+        settings->value().white_point_exp = vsg::vec4(model->convertSpectrumToLinearSrgb(3.0), exposure * 1e-6f);
+        settings->value().sun_direction = vsg::vec4(vsg::normalize(vsg::vec3{0.0, std::sin(sunAngle), std::cos(sunAngle)}), 0.0f);
+        settings->value().sun_size = vsg::vec2(std::tan(0.01935f), std::cos(0.01935f));
 
-        auto grahics_commandGraph = vsg::createCommandGraphForView(window, camera, vsg_scene);
-        viewer->assignRecordAndSubmitTaskAndPresentation({compute_commandGraph, grahics_commandGraph});
+        auto compute_commandGraph = model->createCubeMapGraph(settings, cameraPos);
+        auto skybox = model->createSkyBox();
+
+        vsg_scene->addChild(skybox);
+        vsg_scene->addChild(dirLight);
+
+        auto rendergraph = vsg::createRenderGraphForView(window, camera, vsg_scene, VK_SUBPASS_CONTENTS_INLINE, false);
+        rendergraph->setClearValues({{0.0f, 0.0f, 0.0f, 1.0f}});
+        auto grahics_commandGraph = vsg::CommandGraph::create(window, rendergraph);
+        viewer->assignRecordAndSubmitTaskAndPresentation({grahics_commandGraph, compute_commandGraph});
 
         viewer->compile();
-
-
 
         // rendering main loop
         while (viewer->advanceToNextFrame() && (numFrames < 0 || (numFrames--) > 0))
@@ -288,6 +320,9 @@ int main(int argc, char** argv)
             viewer->handleEvents();
 
             viewer->update();
+
+            cameraPos->set(vsg::vec4(-lookAt->eye.x / 1000.0, lookAt->eye.y / 1000.0, lookAt->eye.z / 1000.0, 0.0f));
+            cameraPos->dirty();
 
             viewer->recordAndSubmit();
 

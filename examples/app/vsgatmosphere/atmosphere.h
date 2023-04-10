@@ -13,58 +13,23 @@ namespace atmosphere {
 
 struct DensityProfileLayer
 {
-    double width = 0.0;
-    double exp_term = 0.0;
-    double exp_scale = 0.0;
-    double linear_term = 0.0;
-    double constant_term = 0.0;
+    DensityProfileLayer(double in_width, double in_exp_term, double in_exp_scale, double in_linear_term, double in_constant_term, double lengthUnitInMeters)
+    {
+        width = static_cast<float>(in_width / lengthUnitInMeters);
+        exp_term = static_cast<float>(in_exp_term);
+        exp_scale = static_cast<float>(in_exp_scale * lengthUnitInMeters);
+        linear_term = static_cast<float>(in_linear_term * lengthUnitInMeters);
+        constant_term = static_cast<float>(in_constant_term);
+    }
+
+    DensityProfileLayer() {}
+
+    float width = 0.0f;
+    float exp_term = 0.0f;
+    float exp_scale = 0.0f;
+    float linear_term = 0.0f;
+    float constant_term = 0.0f;
 };
-/*
-struct ShaderConstants
-{
-    //vsg::vec4 SKY_SPECTRAL_RADIANCE_TO_LUMINANCE;
-    //vsg::vec4 SUN_SPECTRAL_RADIANCE_TO_LUMINANCE;
-
-    vsg::mat4 luminanceFromRadiance;
-
-    vsg::vec4 rayleigh_scattering;
-
-    vsg::vec4 mie_scattering;
-
-    vsg::vec4 absorption_extinction;
-
-    vsg::vec4 solar_irradiance;
-
-    float sun_angular_radius;
-
-    float bottom_radius;
-
-    float top_radius;
-
-    float mie_phase_function_g;
-
-    vsg::vec4 mie_extinction;
-
-    vsg::vec4 ground_albedo;
-
-    int32_t TRANSMITTANCE_TEXTURE_WIDTH;
-    int32_t TRANSMITTANCE_TEXTURE_HEIGHT;
-
-    int32_t SCATTERING_TEXTURE_R_SIZE;
-    int32_t SCATTERING_TEXTURE_MU_SIZE;
-    int32_t SCATTERING_TEXTURE_MU_S_SIZE;
-    int32_t SCATTERING_TEXTURE_NU_SIZE;
-
-    int32_t SCATTERING_TEXTURE_WIDTH;
-    int32_t SCATTERING_TEXTURE_HEIGHT;
-    int32_t SCATTERING_TEXTURE_DEPTH;
-
-    int32_t IRRADIANCE_TEXTURE_WIDTH;
-    int32_t IRRADIANCE_TEXTURE_HEIGHT;
-
-    float mu_s_min;
-};
-*/
 
 struct RuntimeSettings
 {
@@ -91,7 +56,7 @@ public:
     int irradianceWidth = 64;
     int irradianceHeight = 16;
 
-    int cubeSize = 1024;
+    int cubeSize = 4096;
 
     /// <summary>
     /// The wavelength values, in nanometers, and sorted in increasing order, for
@@ -223,9 +188,11 @@ public:
 
     vsg::ref_ptr<vsg::ShaderCompileSettings> compileSettings;
 
+    int precomputedWavelenghts = 15;
+
 private:
 
-    struct Params
+    struct Parameters
     {
         vsg::vec4 solar_irradiance;
         vsg::vec4 rayleigh_scattering;
@@ -254,7 +221,8 @@ private:
 
     vsg::ref_ptr<vsg::ImageInfo> _cubeMap;
 
-    vsg::ShaderStage::SpecializationConstants _constants;
+    vsg::ShaderStage::SpecializationConstants _computeConstants;
+    vsg::ShaderStage::SpecializationConstants _renderConstants;
 
 public:
     AtmosphereModel(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<vsg::PhysicalDevice> physicalDevice, vsg::ref_ptr<vsg::Options> options);
@@ -262,8 +230,10 @@ public:
 
     void initialize(int scatteringOrders);
 
-    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings);
-    vsg::ref_ptr<vsg::StateGroup> createCubeGroup(vsg::ref_ptr<vsg::Window> window);
+    vsg::vec3 convertSpectrumToLinearSrgb(double c);
+
+    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::vec4Value> camera);
+    vsg::ref_ptr<vsg::Node> createSkyBox();
 /*
     void bind_rendering_uniforms(dw::Program* program);
     void convert_spectrum_to_linear_srgb(double& r, double& g, double& b);
@@ -288,19 +258,16 @@ private:
     vsg::ref_ptr<vsg::DescriptorSet> bindIndirectIrradiance() const;
     vsg::ref_ptr<vsg::DescriptorSet> bindMultipleScattering() const;
 
-    vsg::ref_ptr<vsg::DescriptorSet> bindLuminanceFromRadiance(const vsg::mat4 &value, const vsg::vec3 &lambdas) const;
+    void computeParameters(vsg::ref_ptr<vsg::Value<Parameters>> parameters, const vsg::vec3 &lambdas) const;
+/*
+    vsg::ref_ptr<vsg::DescriptorSet> bindParameters(vsg::ref_ptr<vsg::mat4Value> value,
+                                                    vsg::ref_ptr<vsg::Value<Parameters>> parameters,
+                                                    vsg::Array<DensityProfileLayer> profiles,
+                                                    vsg::ref_ptr<vsg::DescriptorSetLayout> dsl) const;*/
+    vsg::ref_ptr<vsg::DescriptorSetLayout> parametersLayout() const;
     vsg::ref_ptr<vsg::DescriptorSetLayout> orderLayout() const;
 
-/*
-    vsg::ref_ptr<vsg::Commands> transmittanceCommands() const;
-    vsg::ref_ptr<vsg::Commands> directIrradianceCommands() const;
-    vsg::ref_ptr<vsg::Commands> singleScatteringCommands() const;
-
-    vsg::ref_ptr<vsg::Commands> scatteringDensityCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
-    vsg::ref_ptr<vsg::Commands> indirectIrradianceCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
-    vsg::ref_ptr<vsg::Commands> multipleScatteringCommands(vsg::ref_ptr<vsg::intValue> orderValue) const;
-*/
-    void setupShaderConstants();
+    void assignComputeConstants();
     void assignRenderConstants();
 
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height);
