@@ -1,8 +1,9 @@
 set(SOURCES
-        atmoshpere-constatnts.h
-        atmosphere-tools.h
-        atmosphere.h
-        atmosphere.cpp
+        AtmoshpereConstatnts.h
+        AtmosphereTools.h
+        Atmosphere.h
+        Atmosphere.cpp
+        InverseMatrices.h
         vsgatmosphere.cpp)
 
 add_executable(vsgatmosphere ${SOURCES})

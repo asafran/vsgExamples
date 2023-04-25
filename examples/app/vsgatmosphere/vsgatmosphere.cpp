@@ -9,7 +9,8 @@
 #include <iostream>
 #include <thread>
 
-#include "atmosphere.h"
+#include "InverseMatrices.h"
+#include "Atmosphere.h"
 
 vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::EllipsoidModel> eps, vsg::ref_ptr<vsg::Options> options)
 {
@@ -51,7 +52,7 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     // realistic, but was used in the original implementation).
     constexpr double kConstantSolarIrradiance = 1.5;
     double kBottomRadius = eps->radiusEquator();
-    double kTopRadius = kBottomRadius + 100000.0;
+    double kTopRadius = kBottomRadius + 60000.0;
     constexpr double kRayleigh = 1.24062e-6;
     constexpr double kRayleighScaleHeight = 8000.0;
     constexpr double kMieScaleHeight = 1200.0;
@@ -101,7 +102,6 @@ vsg::ref_ptr<atmosphere::AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg
     }
 
     auto model = atmosphere::AtmosphereModel::create(window->getOrCreateDevice(), window->getOrCreatePhysicalDevice(), options);
-    //model->compileSettings->generateDebugInfo = true;
 
     model->waveLengths = wavelengths;
     model->solarIrradiance = solar_irradiance;
@@ -137,7 +137,7 @@ int main(int argc, char** argv)
         auto options = vsg::Options::create();
         options->sharedObjects = vsg::SharedObjects::create();
         options->fileCache = vsg::getEnv("VSG_FILE_CACHE");
-        options->paths = vsg::getEnvPaths("RRS2_ROOT");
+        options->paths = vsg::getEnvPaths("VSG_FILE_PATH");
 
 #ifdef vsgXchange_all
         // add vsgXchange's support for reading and writing 3rd party file formats
@@ -179,15 +179,11 @@ int main(int argc, char** argv)
         arguments.read("--samples", windowTraits->samples);
         auto numFrames = arguments.value(-1, "-f");
         auto pathFilename = arguments.value(std::string(), "-p");
-        auto loadLevels = arguments.value(0, "--load-levels");
         auto horizonMountainHeight = arguments.value(0.0, "--hmh");
 
         auto sunAngle = vsg::radians(arguments.value(0.0f, "--angle"));
         auto exposure = arguments.value(1.0f, "--exposure");
-/*
-        uint32_t numOperationThreads = 0;
-        if (arguments.read("--ot", numOperationThreads)) options->operationThreads = vsg::OperationThreads::create(numOperationThreads);
-*/
+
         if (arguments.read("--rgb")) options->mapRGBtoRGBAHint = false;
 
         bool generateDebug = arguments.read({"--shader-debug-info", "--sdi"});
@@ -200,14 +196,6 @@ int main(int argc, char** argv)
 
         auto vsg_scene = vsg::Group::create();
         auto phong = vsg::createPhongShaderSet(options);
-/*
-        auto colorBlendState = vsg::ColorBlendState::create();
-        colorBlendState->attachments = vsg::ColorBlendState::ColorBlendAttachments{
-                {true, VK_BLEND_FACTOR_ONE, VK_BLEND_FACTOR_ONE, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_OP_SUBTRACT, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT}};
-
-
-        phong->defaultGraphicsPipelineStates.push_back(colorBlendState);
-*/
 
         auto databaseSettings = vsg::createOpenStreetMapSettings(options);
         databaseSettings->shaderSet = phong;
@@ -221,11 +209,6 @@ int main(int argc, char** argv)
         auto earth = vsg::TileDatabase::create();
         earth->settings = databaseSettings;
         earth->readDatabase(options);
-/*
-        auto depthSorted = vsg::DepthSorted::create();
-        depthSorted->child = earth;
-        depthSorted->bound = vsg::dsphere(0.0, 0.0, 0.0, ellipsoidModel->radiusEquator());
-*/
         vsg_scene->addChild(earth);
 
         // create the viewer and assign window(s) to it
@@ -239,32 +222,19 @@ int main(int argc, char** argv)
 
         viewer->addWindow(window);
 
-        // compute the bounds of the scene graph to help position camera
-        vsg::ComputeBounds computeBounds;
-        vsg_scene->accept(computeBounds);
-        vsg::dvec3 centre = (computeBounds.bounds.min + computeBounds.bounds.max) * 0.5;
-        double radius = vsg::length(computeBounds.bounds.max - computeBounds.bounds.min) * 0.6;
         double nearFarRatio = 0.0001;
 
-        auto lat = 51.50151088842245;
-        auto lon = -0.14181489107549874;
+        auto cameraPos = vsg::vec4Value::create();
+        cameraPos->properties.dataVariance = vsg::DYNAMIC_DATA;
+        auto inverseMatrices = vsg::mat4Array::create(2);
 
-        // set up the camera
-        //auto lookAt = vsg::LookAt::create(centre + vsg::dvec3(0.0, -radius * 3.5, 0.0), centre, vsg::dvec3(0.0, 0.0, 1.0));
-/*
-        auto lookAt = vsg::LookAt::create();
-        lookAt->center = ellipsoidModel->convertLatLongAltitudeToECEF(vsg::dvec3(lat, lon, 0.0));
-        lookAt->up = vsg::normalize(lookAt->center);
-        lookAt->eye = ellipsoidModel->convertLatLongAltitudeToECEF(vsg::dvec3(lat - 0.001, lon, 20.0));
-*/
-        auto lookAt = vsg::LookAt::create();
-        lookAt->center = vsg::dvec3(0.0, 0.0, 0.0);
-        lookAt->up = vsg::dvec3(0.0, 1.0, 0.0);
-        lookAt->eye = vsg::dvec3(0.0, 0.0, -40000000.0);
+        auto modelView = atmosphere::InverseView::create(inverseMatrices, cameraPos);
+        modelView->center = vsg::dvec3(0.0, 0.0, 0.0);
+        modelView->up = vsg::dvec3(0.0, 1.0, 0.0);
+        modelView->eye = vsg::dvec3(0.0, 0.0, -40000000.0);
+        auto perspective = atmosphere::InversePerspective::create(modelView, ellipsoidModel, inverseMatrices, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
 
-        auto perspective = vsg::EllipsoidPerspective::create(lookAt, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
-
-        auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(window->extent2D()));
+        auto camera = vsg::Camera::create(perspective, modelView, vsg::ViewportState::create(window->extent2D()));
 
         // add close handler to respond the close window button and pressing escape
         viewer->addEventHandler(vsg::CloseHandler::create(viewer));
@@ -274,24 +244,8 @@ int main(int argc, char** argv)
 
         viewer->addEventHandler(trackball);
 
-        // if required preload specific number of PagedLOD levels.
-        if (loadLevels > 0)
-        {
-            vsg::LoadPagedLOD loadPagedLOD(camera, loadLevels);
-
-            auto startTime = std::chrono::steady_clock::now();
-
-            vsg_scene->accept(loadPagedLOD);
-
-            auto time = std::chrono::duration<float, std::chrono::milliseconds::period>(std::chrono::steady_clock::now() - startTime).count();
-            std::cout << "No. of tiles loaded " << loadPagedLOD.numTiles << " in " << time << "ms." << std::endl;
-        }
-
         auto model = createAtmosphereModel(window, ellipsoidModel, options);
         //model->compileSettings->generateDebugInfo = true;
-
-        auto cameraPos = vsg::vec4Value::create(vsg::vec4(lookAt->eye / 1000.0, 0.0f));
-        cameraPos->properties.dataVariance = vsg::DYNAMIC_DATA;
 
         auto settings = vsg::Value<atmosphere::RuntimeSettings>::create();
         settings->properties.dataVariance = vsg::DYNAMIC_DATA;
@@ -301,13 +255,14 @@ int main(int argc, char** argv)
         settings->value().sun_size = vsg::vec2(std::tan(0.01935f), std::cos(0.01935f));
 
         auto compute_commandGraph = model->createCubeMapGraph(settings, cameraPos);
-        auto skybox = model->createSkyBox();
+        auto skybox = model->createSky(settings, inverseMatrices);
 
         vsg_scene->addChild(skybox);
         vsg_scene->addChild(dirLight);
 
         auto rendergraph = vsg::createRenderGraphForView(window, camera, vsg_scene, VK_SUBPASS_CONTENTS_INLINE, false);
         rendergraph->setClearValues({{0.0f, 0.0f, 0.0f, 1.0f}});
+
         auto grahics_commandGraph = vsg::CommandGraph::create(window, rendergraph);
         viewer->assignRecordAndSubmitTaskAndPresentation({grahics_commandGraph, compute_commandGraph});
 
@@ -321,8 +276,7 @@ int main(int argc, char** argv)
 
             viewer->update();
 
-            cameraPos->set(vsg::vec4(-lookAt->eye.x / 1000.0, lookAt->eye.y / 1000.0, lookAt->eye.z / 1000.0, 0.0f));
-            cameraPos->dirty();
+            modelView->update();
 
             viewer->recordAndSubmit();
 
@@ -603,19 +557,19 @@ int main(int argc, char** argv)
     double nearFarRatio = 0.001;
 
     // set up the camera
-    auto lookAt = vsg::LookAt::create(centre + vsg::dvec3(0.0, -radius * 3.5, 0.0), centre, vsg::dvec3(0.0, 0.0, 1.0));
+    auto modelView = vsg::modelView::create(centre + vsg::dvec3(0.0, -radius * 3.5, 0.0), centre, vsg::dvec3(0.0, 0.0, 1.0));
 
     vsg::ref_ptr<vsg::ProjectionMatrix> perspective;
     if (auto ellipsoidModel = vsg_scene->getRefObject<vsg::EllipsoidModel>("EllipsoidModel"))
     {
-        perspective = vsg::EllipsoidPerspective::create(lookAt, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
+        perspective = vsg::EllipsoidPerspective::create(modelView, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
     }
     else
     {
         perspective = vsg::Perspective::create(30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio * radius, radius * 4.5);
     }
 
-    auto camera = vsg::Camera::create(perspective, lookAt, vsg::ViewportState::create(window->extent2D()));
+    auto camera = vsg::Camera::create(perspective, modelView, vsg::ViewportState::create(window->extent2D()));
 
     // add close handler to respond the close window button and pressing escape
     viewer->addEventHandler(vsg::CloseHandler::create(viewer));

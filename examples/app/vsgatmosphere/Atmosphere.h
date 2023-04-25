@@ -5,6 +5,7 @@
 #include <vector>
 #include <vsg/app/EllipsoidModel.h>
 #include <vsg/app/Window.h>
+#include <vsg/app/WindowResizeHandler.h>
 #include <vsg/core/Data.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/ShaderStage.h>
@@ -56,7 +57,7 @@ public:
     int irradianceWidth = 64;
     int irradianceHeight = 16;
 
-    int cubeSize = 4096;
+    int cubeSize = 1024;
 
     /// <summary>
     /// The wavelength values, in nanometers, and sorted in increasing order, for
@@ -233,11 +234,10 @@ public:
     vsg::vec3 convertSpectrumToLinearSrgb(double c);
 
     vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::vec4Value> camera);
+    vsg::ref_ptr<vsg::Node> createEnvMap();
+    vsg::ref_ptr<vsg::Node> createSky(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::mat4Array> inverseMatrices);
     vsg::ref_ptr<vsg::Node> createSkyBox();
-/*
-    void bind_rendering_uniforms(dw::Program* program);
-    void convert_spectrum_to_linear_srgb(double& r, double& g, double& b);
-*/
+
 private:
     void generateTextures();
 
@@ -259,11 +259,7 @@ private:
     vsg::ref_ptr<vsg::DescriptorSet> bindMultipleScattering() const;
 
     void computeParameters(vsg::ref_ptr<vsg::Value<Parameters>> parameters, const vsg::vec3 &lambdas) const;
-/*
-    vsg::ref_ptr<vsg::DescriptorSet> bindParameters(vsg::ref_ptr<vsg::mat4Value> value,
-                                                    vsg::ref_ptr<vsg::Value<Parameters>> parameters,
-                                                    vsg::Array<DensityProfileLayer> profiles,
-                                                    vsg::ref_ptr<vsg::DescriptorSetLayout> dsl) const;*/
+
     vsg::ref_ptr<vsg::DescriptorSetLayout> parametersLayout() const;
     vsg::ref_ptr<vsg::DescriptorSetLayout> orderLayout() const;
 

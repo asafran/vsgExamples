@@ -1,7 +1,7 @@
 #ifndef ATMOSPHERETOOLS_H
 #define ATMOSPHERETOOLS_H
 
-#include "atmoshpere-constatnts.h"
+#include "AtmoshpereConstatnts.h"
 #include <vector>
 #include <assert.h>
 #include <vsg/maths/mat4.h>
