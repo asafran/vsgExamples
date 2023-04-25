@@ -506,11 +506,7 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky(vsg::ref_ptr<vsg::Value<Runti
     vsg::VertexInputState::Attributes vertexAttributeDescriptions{
         VkVertexInputAttributeDescription{0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}};
 
-    auto rasterState = vsg::RasterizationState::create();
-
     auto depthState = vsg::DepthStencilState::create();
-    //depthState->depthTestEnable = VK_FALSE;
-    //depthState->depthWriteEnable = VK_FALSE;
     depthState->depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
     auto colorBlendState = vsg::ColorBlendState::create();
@@ -521,7 +517,7 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky(vsg::ref_ptr<vsg::Value<Runti
     vsg::GraphicsPipelineStates pipelineStates{
         vsg::VertexInputState::create(vertexBindingsDescriptions, vertexAttributeDescriptions),
         vsg::InputAssemblyState::create(),
-        rasterState,
+        vsg::RasterizationState::create(),
         vsg::MultisampleState::create(),
         colorBlendState,
         depthState};
@@ -546,9 +542,6 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky(vsg::ref_ptr<vsg::Value<Runti
 
     auto pushInverse = vsg::PushConstants::create(VK_SHADER_STAGE_VERTEX_BIT, 128, inverseMatrices);
     root->add(pushInverse);
-    //root->add(pushInverseModelView);
-    /*auto pushCameraPos = vsg::PushConstants::create(VK_SHADER_STAGE_FRAGMENT_BIT, 0, camera);
-    root->add(pushCameraPos);*/
 
     auto vid = vsg::VertexIndexDraw::create();
 
@@ -559,11 +552,7 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky(vsg::ref_ptr<vsg::Value<Runti
                                             {1.0f, 1.0f}});
 
     auto indices = vsg::ushortArray::create({0, 2, 1, 1, 2, 3});
-/*
-    root->addChild(vsg::BindVertexBuffers::create(0, vsg::DataList{vertices}));
-    root->addChild(vsg::BindIndexBuffer::create(indices));
-    root->addChild(vsg::DrawIndexed::create(indices->size(), 1, 0, 0, 0));
-*/
+
     vid->assignArrays(vsg::DataList{vertices});
     vid->assignIndices(indices);
     vid->indexCount = static_cast<uint32_t>(indices->size());
@@ -806,19 +795,7 @@ void AtmosphereModel::computeParameters(vsg::ref_ptr<vsg::Value<Parameters>> par
 
     parameters->set(p);
 }
-/*
-vsg::ref_ptr<vsg::DescriptorSet> AtmosphereModel::bindParameters(vsg::ref_ptr<vsg::mat4Value> value,
-                                                                 vsg::ref_ptr<vsg::Value<Parameters>> parameters,
-                                                                 vsg::Array<DensityProfileLayer> profiles,
-                                                                 vsg::ref_ptr<vsg::DescriptorSetLayout> dsl) const
-{
-    auto matrix = vsg::DescriptorBuffer::create(value, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    auto parametersValue = vsg::DescriptorBuffer::create(parameters, 1, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    auto proflesArray = vsg::DescriptorBuffer::create(profiles, 2, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 
-    vsg::Descriptors descriptors{matrix, parametersValue, proflesArray};
-    return vsg::DescriptorSet::create(dsl, descriptors);
-}*/
 vsg::ref_ptr<vsg::DescriptorSetLayout> AtmosphereModel::parametersLayout() const
 {
     // set up DescriptorSetLayout, DecriptorSet and BindDescriptorSets
@@ -862,31 +839,6 @@ void AtmosphereModel::assignComputeConstants()
         {38, vsg::floatValue::create(static_cast<float>(topRadius / lengthUnitInMeters))},
         {39, vsg::floatValue::create(static_cast<float>(miePhaseFunction_g))},
         {40, vsg::floatValue::create(static_cast<float>(std::cos(maxSunZenithAngle)))}
-/*
-        {47, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.width / lengthUnitInMeters))},
-        {48, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_term))},
-        {49, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.exp_scale * lengthUnitInMeters))},
-        {50, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.linear_term * lengthUnitInMeters))},
-        {51, vsg::floatValue::create(static_cast<float>(rayleighDensityLayer.constant_term))},
-
-        {52, vsg::floatValue::create(static_cast<float>(mieDensityLayer.width / lengthUnitInMeters))},
-        {53, vsg::floatValue::create(static_cast<float>(mieDensityLayer.exp_term))},
-        {54, vsg::floatValue::create(static_cast<float>(mieDensityLayer.exp_scale * lengthUnitInMeters))},
-        {55, vsg::floatValue::create(static_cast<float>(mieDensityLayer.linear_term * lengthUnitInMeters))},
-        {56, vsg::floatValue::create(static_cast<float>(mieDensityLayer.constant_term))},
-
-        {57, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.width / lengthUnitInMeters))},
-        {58, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.exp_term))},
-        {59, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.exp_scale * lengthUnitInMeters))},
-        {60, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.linear_term * lengthUnitInMeters))},
-        {61, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer0.constant_term))},
-
-        {62, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.width / lengthUnitInMeters))},
-        {63, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.exp_term))},
-        {64, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.exp_scale * lengthUnitInMeters))},
-        {65, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.linear_term * lengthUnitInMeters))},
-        {66, vsg::floatValue::create(static_cast<float>(absorptionDensityLayer1.constant_term))}
-*/
     };
 }
 

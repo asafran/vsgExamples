@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <vsg/maths/mat4.h>
 #include <vsg/maths/vec3.h>
+
 namespace atmosphere {
 
 inline double interpolate(
