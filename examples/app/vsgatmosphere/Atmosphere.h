@@ -235,7 +235,8 @@ public:
 
     vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::vec4Value> camera);
     vsg::ref_ptr<vsg::Node> createEnvMap();
-    vsg::ref_ptr<vsg::Node> createSky(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::mat4Array> inverseMatrices);
+    vsg::ref_ptr<vsg::Node> createSky(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings);
+    vsg::ref_ptr<vsg::Node> createSkyView(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::Camera> camera);
     vsg::ref_ptr<vsg::Node> createSkyBox();
 
 private:
@@ -269,5 +270,8 @@ private:
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height);
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height, uint32_t depth);
 };
+
+extern vsg::ref_ptr<AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::EllipsoidModel> eps, vsg::ref_ptr<vsg::Options> options);
+
 }
 #endif // ATMOSPHEREMODEL_H

@@ -28,9 +28,7 @@ layout(set = 0, binding = 4) uniform sampler3D single_mie_scattering_texture;
 layout(push_constant) uniform PushConstants {
     mat4 projection;
     mat4 modelView;
-    mat4 invProjection;
-    mat4 invModelView;
-} pc;
+} pc; //inverse
 
 // ------------------------------------------------------------------
 // FUNCTIONS --------------------------------------------------------
@@ -76,7 +74,7 @@ void main()
 {
 	vec3 view_direction = normalize(inRay);
 
-    vec3 cameraPos = pc.invModelView[3].xyz;
+    vec3 cameraPos = pc.modelView[3].xyz;
 
 	// Compute the radiance of the sky.
 	vec3 transmittance;

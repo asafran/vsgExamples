@@ -3,61 +3,64 @@
 
 #include <vsg/app/ViewMatrix.h>
 #include <vsg/app/ProjectionMatrix.h>
+#include <vsg/nodes/Transform.h>
 
 namespace atmosphere {
-
-    class InversePerspective : public vsg::Inherit<vsg::EllipsoidPerspective, InversePerspective>
+    class InverseProjection : public vsg::Inherit<vsg::ProjectionMatrix, InverseProjection>
     {
     public:
-
-        InversePerspective(vsg::ref_ptr<vsg::LookAt> la, vsg::ref_ptr<vsg::EllipsoidModel> em, vsg::ref_ptr<vsg::mat4Array> inverseMatrices)
-            : vsg::Inherit<vsg::EllipsoidPerspective, InversePerspective>(la, em)
-            , _data(inverseMatrices)
+        explicit InverseProjection(vsg::ref_ptr<vsg::ProjectionMatrix> pm)
+            : projectionMatrix(pm)
         {
-            _data->set(0, vsg::mat4(inverse()));
         }
 
-        InversePerspective(vsg::ref_ptr<vsg::LookAt> la, vsg::ref_ptr<vsg::EllipsoidModel> em, vsg::ref_ptr<vsg::mat4Array> inverseMatrices,
-                           double fov, double ar, double nfr, double hmh)
-            : vsg::Inherit<vsg::EllipsoidPerspective, InversePerspective>(la, em, fov, ar, nfr, hmh)
-            , _data(inverseMatrices)
+        /// returns projectionMatrix->inverse()
+        vsg::dmat4 transform() const override
         {
-            _data->set(0, vsg::mat4(inverse()));
+            return projectionMatrix->inverse();
         }
 
         void changeExtent(const VkExtent2D& prevExtent, const VkExtent2D& newExtent) override
         {
-            vsg::EllipsoidPerspective::changeExtent(prevExtent, newExtent);
-            _data->set(0, vsg::mat4(inverse()));
+            projectionMatrix->changeExtent(prevExtent, newExtent);
         }
-    protected:
-        vsg::ref_ptr<vsg::mat4Array> _data;
+        vsg::ref_ptr<vsg::ProjectionMatrix> projectionMatrix;
     };
 
-    class InverseView : public vsg::Inherit<vsg::LookAt, InverseView>
+    class InverseView : public vsg::Inherit<vsg::ViewMatrix, InverseView>
     {
     public:
-
-        InverseView(vsg::ref_ptr<vsg::mat4Array> inverseMatrices, vsg::ref_ptr<vsg::vec4Value> camera)
-            : vsg::Inherit<vsg::LookAt, InverseView>()
-            , _matrices(inverseMatrices)
-            , _camera(camera)
+        explicit InverseView(double s, vsg::ref_ptr<vsg::ViewMatrix> vm)
+            : viewMatrix(vm)
+            , scale(s)
         {
-            update();
         }
 
-        void update()
+        /// returns projectionMatrix->inverse()
+        vsg::dmat4 transform() const override
         {
-            auto inverseMatrix = inverse();
-            inverseMatrix(3, 0) /= 1000.0;
-            inverseMatrix(3, 1) /= 1000.0;
-            inverseMatrix(3, 2) /= 1000.0;
-            _matrices->set(1, vsg::mat4(inverseMatrix));
-            _camera->set(vsg::vec4(eye.x / 1000.0, eye.y / 1000.0, eye.z / 1000.0, 0.0f));
+            auto inverse = viewMatrix->inverse();
+            inverse(3,0) *= scale;
+            inverse(3,1) *= scale;
+            inverse(3,2) *= scale;
+            return inverse;
         }
+
+        vsg::ref_ptr<vsg::ViewMatrix> viewMatrix;
+        double scale;
+    };
+
+    class InverseTransform : public vsg::Inherit<vsg::Transform, InverseTransform>
+    {
+    public:
+        InverseTransform() {}
+        explicit InverseTransform(const vsg::dmat4& in_matrix) : matrix(in_matrix) {}
+
+        vsg::dmat4 transform(const vsg::dmat4& mv) const override { return vsg::inverse(mv * matrix); }
+
+        vsg::dmat4 matrix;
+
     protected:
-        vsg::ref_ptr<vsg::mat4Array> _matrices;
-        vsg::ref_ptr<vsg::vec4Value> _camera;
     };
 }
 #endif // INVERSEMATRICES_H
