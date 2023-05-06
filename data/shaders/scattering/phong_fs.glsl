@@ -57,6 +57,20 @@ layout(set = 1, binding = 3) uniform sampler2D irradiance_texture;
 layout(set = 1, binding = 4) uniform sampler3D scattering_texture;
 layout(set = 1, binding = 5) uniform sampler3D single_mie_scattering_texture;
 
+layout(set = 1, binding = 6, std140) uniform Settings
+{
+	vec4 whitePointExp;
+	vec2 sunSize;
+} settings;
+
+layout(set = 1, binding = 7, std140) uniform Positional
+{
+	vec4 sunDirection;
+    vec4 globalSunDirection;
+    vec4 cameraPos;
+} positional;
+
+
 // Find the normal for this fragment, pulling either from a predefined normal map
 // or from the interpolated mesh normal and tangent attributes.
 vec3 getNormal()
@@ -108,6 +122,7 @@ vec3 computeLighting(vec3 ambientColor, vec3 diffuseColor, vec3 specularColor, v
 
     return result;
 }
+
     Luminance3 GetSolarRadiance() {
         return solar_irradiance /
             (PI * sun_angular_radius * sun_angular_radius) *
@@ -191,9 +206,6 @@ void main()
     int numSpotLights = int(lightNums[3]);
     int index = 1;
 
-    vec3 sun_direction = vec3(0.0, 0.0, 1.0);
-    vec3 camera = vec3(0.0, 0.0, 0.0);
-
     if (numAmbientLights>0)
     {
         // ambient lights
@@ -206,11 +218,8 @@ void main()
 
     if (numDirectionalLights>0)
     {
-        index++;
-        sun_direction = lightData.values[index++].xyz;
-
         // directional lights
-        for(int i = 1; i<numDirectionalLights; ++i)
+        for(int i = 0; i<numDirectionalLights; ++i)
         {
             vec4 lightColor = lightData.values[index++];
             vec3 direction = -lightData.values[index++].xyz;
@@ -230,10 +239,8 @@ void main()
 
     if (numPointLights>0)
     {
-        index++;
-        camera = lightData.values[index++].xyz / 1000.0;
         // point light
-        for(int i = 1; i<numPointLights; ++i)
+        for(int i = 0; i<numPointLights; ++i)
         {
             vec4 lightColor = lightData.values[index++];
             vec3 position = lightData.values[index++].xyz;
@@ -283,19 +290,19 @@ void main()
         }
     }
 
-    vec3 point = camera + viewDir / 1000.0;
+    vec3 point = positional.cameraPos.xyz + viewDir / 1000.0;
 
     vec3 sky_irradiance;
-	vec3 sun_irradiance = GetSunAndSkyIrradiance(point, -nd, sun_direction, sky_irradiance);
+	vec3 sun_irradiance = GetSunAndSkyIrradiance(point, -nd, positional.sunDirection.xyz, sky_irradiance);
 
 	vec3 sphere_radiance = (1.0 / PI) * (sun_irradiance + sky_irradiance);
 
 	vec3 transmittance;
-	vec3 in_scatter = GetSkyRadianceToPoint(camera, point, 0.0, sun_direction, transmittance);
+	vec3 in_scatter = GetSkyRadianceToPoint(positional.cameraPos.xyz, point, 0.0, positional.sunDirection.xyz, transmittance);
 
 	sphere_radiance = sphere_radiance * transmittance + in_scatter;
 
-	sphere_radiance = pow(vec3(1,1,1) - exp(-sphere_radiance * 5.0 * 1e-6), vec3(1.0 / 2.2));
+	sphere_radiance = pow(vec3(1.0) - exp(-sphere_radiance / settings.whitePointExp.rbg * settings.whitePointExp.a), vec3(1.0 / 2.2));
 
 	color.rgb += diffuseColor.rgb * sphere_radiance;
 

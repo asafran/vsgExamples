@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "Atmosphere.h"
+#include "InverseMatrices.h"
 
 int main(int argc, char** argv)
 {
@@ -90,10 +91,6 @@ int main(int argc, char** argv)
         }
         auto vsg_scene = vsg::Group::create();
 
-        auto dirLight = vsg::DirectionalLight::create();
-        dirLight->direction = vsg::normalize(vsg::dvec3{0.0, std::sin(sunAngle + vsg::PIf), std::cos(sunAngle + vsg::PIf)});
-        auto point = vsg::PointLight::create();
-
         auto ellipsoidModel = vsg::EllipsoidModel::create(vsg::WGS_84_RADIUS_EQUATOR, vsg::WGS_84_RADIUS_EQUATOR);
 
         auto model = atmosphere::createAtmosphereModel(window, ellipsoidModel, options);
@@ -133,6 +130,9 @@ int main(int argc, char** argv)
 
         auto camera = vsg::Camera::create(perspective, modelView, vsg::ViewportState::create(window->extent2D()));
 
+        auto viewDependent = atmosphere::AtmosphereLighting::create(model, modelView);
+        model->viewDescriptorSetLayout = viewDependent->descriptorSetLayout;
+
         // add close handler to respond the close window button and pressing escape
         viewer->addEventHandler(vsg::CloseHandler::create(viewer));
 
@@ -142,32 +142,22 @@ int main(int argc, char** argv)
 
         viewer->addEventHandler(trackball);
 
-        auto settings = vsg::Value<atmosphere::RuntimeSettings>::create();
-        settings->properties.dataVariance = vsg::DYNAMIC_DATA;
-
-        settings->value().white_point_exp = vsg::vec4(model->convertSpectrumToLinearSrgb(3.0), exposure * 1e-6f);
-        settings->value().sun_direction = vsg::vec4(vsg::normalize(vsg::vec3{0.0, std::sin(sunAngle), std::cos(sunAngle)}), 0.0f);
-        settings->value().sun_size = vsg::vec2(std::tan(0.01935f), std::cos(0.01935f));
-
-        auto compute_commandGraph = model->createCubeMapGraph(settings, cameraPos);
-        auto skybox = model->createSky(settings);
-
-        vsg_scene->addChild(dirLight);
-        vsg_scene->addChild(point);
+        auto compute_commandGraph = model->createCubeMapGraph(cameraPos);
 
         // set up the render graph
         //auto renderGraph = vsg::createRenderGraphForView(window, camera, vsg_scene, VK_SUBPASS_CONTENTS_INLINE, false);
 
-        auto view = vsg::View::create(camera);
-        view->addChild(vsg_scene);
-        view->viewDependentState = atmosphere::AtmosphereLighting::create(model);
+        auto mainView = vsg::View::create(camera);
+        mainView->addChild(vsg_scene);
 
         // set up the render graph
-        auto renderGraph = vsg::RenderGraph::create(window, view);
+        auto renderGraph = vsg::RenderGraph::create(window, mainView);
         renderGraph->contents = VK_SUBPASS_CONTENTS_INLINE;
 
-        renderGraph->addChild(model->createSkyView(settings, window, camera));
+        renderGraph->addChild(model->createSkyView(window, camera));
         renderGraph->setClearValues({{0.0f, 0.0f, 0.0f, 1.0f}});
+
+        mainView->viewDependentState = viewDependent;
 
         auto grahics_commandGraph = vsg::CommandGraph::create(window, renderGraph);
         viewer->assignRecordAndSubmitTaskAndPresentation({grahics_commandGraph, compute_commandGraph});

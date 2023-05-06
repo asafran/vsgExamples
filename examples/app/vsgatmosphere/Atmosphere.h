@@ -187,9 +187,13 @@ public:
     vsg::ref_ptr<vsg::Data> irradianceData;
     vsg::ref_ptr<vsg::Data> mieScatteringData;
 
+    vsg::ref_ptr<vsg::DescriptorSetLayout> viewDescriptorSetLayout;
+
     vsg::ref_ptr<vsg::ShaderCompileSettings> compileSettings;
 
     vsg::ref_ptr<vsg::Value<atmosphere::RuntimeSettings>> runtimeSettings;
+
+    vsg::dvec3 sunDirection = {0.0, std::sin(vsg::PI), std::cos(vsg::PI)};
 
     int precomputedWavelenghts = 15;
 
@@ -238,10 +242,10 @@ public:
 
     vsg::vec3 convertSpectrumToLinearSrgb(double c);
 
-    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::vec4Value> camera);
+    vsg::ref_ptr<vsg::CommandGraph> createCubeMapGraph(vsg::ref_ptr<vsg::vec4Value> camera);
     vsg::ref_ptr<vsg::Node> createEnvMap();
-    vsg::ref_ptr<vsg::Node> createSky(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings);
-    vsg::ref_ptr<vsg::Node> createSkyView(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::Camera> camera);
+    vsg::ref_ptr<vsg::Node> createSky();
+    vsg::ref_ptr<vsg::Node> createSkyView(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::Camera> camera);
     vsg::ref_ptr<vsg::Node> createSkyBox();
     vsg::ref_ptr<vsg::ShaderSet> phongShaderSet();
 
@@ -276,6 +280,8 @@ private:
 
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height);
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height, uint32_t depth);
+
+    float exposure = 10.0f;
 
     friend class AtmosphereLighting;
 };

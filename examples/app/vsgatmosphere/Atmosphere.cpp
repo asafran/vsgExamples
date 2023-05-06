@@ -1,5 +1,6 @@
 #include "Atmosphere.h"
 #include "AtmosphereTools.h"
+#include "AtmosphereLighting.h"
 #include "InverseMatrices.h"
 
 #include <vsg/all.h>
@@ -14,8 +15,7 @@ AtmosphereModel::AtmosphereModel(vsg::ref_ptr<vsg::Device> device, vsg::ref_ptr<
     , _options(options)
 {
     compileSettings = vsg::ShaderCompileSettings::create();
-    RuntimeSettings settings{vsg::vec4(convertSpectrumToLinearSrgb(3.0), 5e-6f), {std::tan(0.01935f), std::cos(0.01935f)}};
-    runtimeSettings = vsg::Value<atmosphere::RuntimeSettings>::create(settings);
+    runtimeSettings = vsg::Value<atmosphere::RuntimeSettings>::create(RuntimeSettings{});
     runtimeSettings->properties.dataVariance = vsg::DYNAMIC_DATA;
 }
 
@@ -288,7 +288,7 @@ vsg::ref_ptr<vsg::CommandGraph> AtmosphereModel::createCubeMapGraph(vsg::ref_ptr
         {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(vsg::vec4)}
     };
 
-    auto settingsBuffer = vsg::DescriptorBuffer::create(settings, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    auto settingsBuffer = vsg::DescriptorBuffer::create(runtimeSettings, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
     auto transmittanceTexture = vsg::DescriptorImage::create(_transmittanceTexture, 1, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     auto irradianceTexture = vsg::DescriptorImage::create(_irradianceTexture, 2, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
     auto scatteringTexture = vsg::DescriptorImage::create(_scatteringTexture, 3, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
@@ -539,15 +539,7 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky()
     vertexShader->module->hints = compileSettings;
     fragmentShader->module->hints = compileSettings;
 
-    // set up DescriptorSetLayout, DecriptorSet and BindDescriptorSets
-    vsg::DescriptorSetLayoutBindings descriptorBindings{
-        {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-        {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}
-    };
-    auto descriptorSetLayout = vsg::DescriptorSetLayout::create(descriptorBindings);
+    auto dummy = vsg::DescriptorSetLayout::create();
 
     vsg::PushConstantRanges pushConstantRanges{
         {VK_SHADER_STAGE_VERTEX_BIT|VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128}
@@ -562,11 +554,6 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky()
     auto depthState = vsg::DepthStencilState::create();
     depthState->depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
 
-    auto colorBlendState = vsg::ColorBlendState::create();
-    colorBlendState->attachments = vsg::ColorBlendState::ColorBlendAttachments{
-            {true, VK_BLEND_FACTOR_SRC_COLOR, VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA, VK_BLEND_OP_SUBTRACT, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT}};
-
-
     vsg::GraphicsPipelineStates pipelineStates{
         vsg::VertexInputState::create(vertexBindingsDescriptions, vertexAttributeDescriptions),
         vsg::InputAssemblyState::create(),
@@ -575,23 +562,12 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSky()
         vsg::ColorBlendState::create(),
         depthState};
 
-    auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{descriptorSetLayout}, pushConstantRanges);
+    auto pipelineLayout = vsg::PipelineLayout::create(vsg::DescriptorSetLayouts{dummy, viewDescriptorSetLayout}, pushConstantRanges);
     auto pipeline = vsg::GraphicsPipeline::create(pipelineLayout, shaders, pipelineStates);
     auto bindGraphicsPipeline = vsg::BindGraphicsPipeline::create(pipeline);
 
     auto root = vsg::StateGroup::create();
     root->add(bindGraphicsPipeline);
-
-    auto settingsBuffer = vsg::DescriptorBuffer::create(runtimeSettings, 0, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-    auto transmittanceTexture = vsg::DescriptorImage::create(_transmittanceTexture, 1, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    auto irradianceTexture = vsg::DescriptorImage::create(_irradianceTexture, 2, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    auto scatteringTexture = vsg::DescriptorImage::create(_scatteringTexture, 3, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-    auto singleMieTexture = vsg::DescriptorImage::create(_singleMieScatteringTexture, 4, 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-
-    vsg::Descriptors descriptors{settingsBuffer, transmittanceTexture, irradianceTexture, scatteringTexture, singleMieTexture};
-    auto descriptorSet = vsg::DescriptorSet::create(descriptorSetLayout, descriptors);
-    auto bindDescriptorSet = vsg::BindDescriptorSet::create(VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, descriptorSet);
-    root->add(bindDescriptorSet);
 
     auto vid = vsg::VertexIndexDraw::create();
 
@@ -621,7 +597,9 @@ vsg::ref_ptr<vsg::Node> AtmosphereModel::createSkyView(vsg::ref_ptr<vsg::Window>
     auto skyCamera = vsg::Camera::create(inversePerojection, inverseView, vsg::ViewportState::create(window->extent2D()));
 
     auto sky = createSky();
-    return vsg::View::create(skyCamera, sky);
+    auto view = vsg::View::create(skyCamera, sky);
+    view->viewDependentState = AtmosphereLighting::create(this);
+    return view;
 }
 
 void AtmosphereModel::generateTextures()
@@ -1112,6 +1090,9 @@ vsg::ref_ptr<AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> wi
     model->groundAlbedo = ground_albedo;
     model->maxSunZenithAngle = max_sun_zenith_angle;
     model->lengthUnitInMeters = 1000.0;
+
+    RuntimeSettings settings{vsg::vec4(model->convertSpectrumToLinearSrgb(3.0), 5e-6f), {std::tan(0.01935f), std::cos(0.01935f)}};
+    model->runtimeSettings->set(settings);
 
     model->initialize(4);
 

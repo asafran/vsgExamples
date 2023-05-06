@@ -10,9 +10,21 @@ namespace atmosphere {
     class AtmosphereLighting : public vsg::Inherit<vsg::ViewDependentState, AtmosphereLighting>
     {
     public:
-        AtmosphereLighting(vsg::ref_ptr<AtmosphereModel> model, uint32_t maxNumberLights = 64, uint32_t maxViewports = 1);
+        struct Positional
+        {
+            vsg::vec4 sunDirection;
+            vsg::vec4 globalSunDirection;
+            vsg::vec4 cameraPos;
+        };
+
+        AtmosphereLighting(AtmosphereModel *model, vsg::ref_ptr<vsg::ViewMatrix> view = {}, uint32_t maxNumberLights = 64, uint32_t maxViewports = 1);
 
         vsg::ref_ptr<AtmosphereModel> atmosphereModel;
+        vsg::ref_ptr<vsg::ViewMatrix> viewMatrix;
+
+        vsg::ref_ptr<vsg::Value<Positional>> positional;
+
+        void pack() override;
 
     protected:
         ~AtmosphereLighting();
