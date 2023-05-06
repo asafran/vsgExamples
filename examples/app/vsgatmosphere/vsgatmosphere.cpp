@@ -1,3 +1,4 @@
+#include "AtmosphereLighting.h"
 #include <vsg/all.h>
 
 #ifdef vsgXchange_FOUND
@@ -79,23 +80,6 @@ int main(int argc, char** argv)
 
         if (arguments.errors()) return arguments.writeErrorMessages(std::cerr);
 
-        auto vsg_scene = vsg::Group::create();
-        auto phong = vsg::createPhongShaderSet(options);
-
-        auto databaseSettings = vsg::createOpenStreetMapSettings(options);
-        databaseSettings->shaderSet = phong;
-        databaseSettings->lighting = true;
-
-        auto dirLight = vsg::DirectionalLight::create();
-        dirLight->direction = vsg::normalize(vsg::dvec3{0.0, std::sin(sunAngle + vsg::PIf), std::cos(sunAngle + vsg::PIf)});
-
-        auto ellipsoidModel = databaseSettings->ellipsoidModel = vsg::EllipsoidModel::create(vsg::WGS_84_RADIUS_EQUATOR, vsg::WGS_84_RADIUS_EQUATOR);
-
-        auto earth = vsg::TileDatabase::create();
-        earth->settings = databaseSettings;
-        earth->readDatabase(options);
-        vsg_scene->addChild(earth);
-
         // create the viewer and assign window(s) to it
         auto viewer = vsg::Viewer::create();
         auto window = vsg::Window::create(windowTraits);
@@ -104,6 +88,27 @@ int main(int argc, char** argv)
             std::cout << "Could not create windows." << std::endl;
             return 1;
         }
+        auto vsg_scene = vsg::Group::create();
+
+        auto dirLight = vsg::DirectionalLight::create();
+        dirLight->direction = vsg::normalize(vsg::dvec3{0.0, std::sin(sunAngle + vsg::PIf), std::cos(sunAngle + vsg::PIf)});
+        auto point = vsg::PointLight::create();
+
+        auto ellipsoidModel = vsg::EllipsoidModel::create(vsg::WGS_84_RADIUS_EQUATOR, vsg::WGS_84_RADIUS_EQUATOR);
+
+        auto model = atmosphere::createAtmosphereModel(window, ellipsoidModel, options);
+
+        options->shaderSets["phong"] = model->phongShaderSet();
+
+        auto databaseSettings = vsg::createOpenStreetMapSettings(options);
+        databaseSettings->lighting = true;
+        databaseSettings->ellipsoidModel = ellipsoidModel;
+
+        auto earth = vsg::TileDatabase::create();
+        earth->settings = databaseSettings;
+        earth->readDatabase(options);
+
+        vsg_scene->addChild(earth);
 
         viewer->addWindow(window);
 
@@ -112,12 +117,19 @@ int main(int argc, char** argv)
         auto cameraPos = vsg::vec4Value::create();
         cameraPos->properties.dataVariance = vsg::DYNAMIC_DATA;
 
+        auto builder = vsg::Builder::create();
+        builder->options = options;
+
+        auto transfrom = vsg::AbsoluteTransform::create(vsg::translate(0.0, 0.0, -3.0));
+        transfrom->addChild(builder->createSphere());
+        vsg_scene->addChild(transfrom);
+
         auto modelView = vsg::LookAt::create();
-        modelView->center = vsg::dvec3(0.0, 0.0, 0.0);
+        modelView->center = ellipsoidModel->convertLatLongAltitudeToECEF({51.50151088842245, -0.14181489107549874, 0.0});
         modelView->up = vsg::dvec3(0.0, 1.0, 0.0);
-        modelView->eye = vsg::dvec3(0.0, 0.0, -40000000.0);
+        modelView->eye = vsg::dvec3(40000000.0, 0.0, 0.0);
         //auto perspective = vsg::EllipsoidPerspective::create(modelView, ellipsoidModel, 30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, horizonMountainHeight);
-        auto perspective = vsg::Perspective::create(30.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, ellipsoidModel->radiusEquator() * 10.0);
+        auto perspective = vsg::Perspective::create(60.0, static_cast<double>(window->extent2D().width) / static_cast<double>(window->extent2D().height), nearFarRatio, ellipsoidModel->radiusEquator() * 10.0);
 
         auto camera = vsg::Camera::create(perspective, modelView, vsg::ViewportState::create(window->extent2D()));
 
@@ -126,9 +138,9 @@ int main(int argc, char** argv)
 
         auto trackball = vsg::Trackball::create(camera, ellipsoidModel);
 
-        viewer->addEventHandler(trackball);
+        trackball->addKeyViewpoint(vsg::KeySymbol('1'), 51.50151088842245, -0.14181489107549874, 10.0, 2.0); // Grenwish Observatory
 
-        auto model = atmosphere::createAtmosphereModel(window, ellipsoidModel, options);
+        viewer->addEventHandler(trackball);
 
         auto settings = vsg::Value<atmosphere::RuntimeSettings>::create();
         settings->properties.dataVariance = vsg::DYNAMIC_DATA;
@@ -141,9 +153,19 @@ int main(int argc, char** argv)
         auto skybox = model->createSky(settings);
 
         vsg_scene->addChild(dirLight);
+        vsg_scene->addChild(point);
 
         // set up the render graph
-        auto renderGraph = vsg::createRenderGraphForView(window, camera, vsg_scene, VK_SUBPASS_CONTENTS_INLINE, false);
+        //auto renderGraph = vsg::createRenderGraphForView(window, camera, vsg_scene, VK_SUBPASS_CONTENTS_INLINE, false);
+
+        auto view = vsg::View::create(camera);
+        view->addChild(vsg_scene);
+        view->viewDependentState = atmosphere::AtmosphereLighting::create(model);
+
+        // set up the render graph
+        auto renderGraph = vsg::RenderGraph::create(window, view);
+        renderGraph->contents = VK_SUBPASS_CONTENTS_INLINE;
+
         renderGraph->addChild(model->createSkyView(settings, window, camera));
         renderGraph->setClearValues({{0.0f, 0.0f, 0.0f, 1.0f}});
 

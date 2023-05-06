@@ -3,6 +3,8 @@ set(SOURCES
         AtmosphereTools.h
         Atmosphere.h
         Atmosphere.cpp
+        AtmosphereLighting.h
+        AtmosphereLighting.cpp
         InverseMatrices.h
         vsgatmosphere.cpp)
 

@@ -58,52 +58,35 @@ const int SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE;
 layout (constant_id = 16) const int IRRADIANCE_TEXTURE_WIDTH = 64;
 layout (constant_id = 17) const int IRRADIANCE_TEXTURE_HEIGHT = 16;
 
+
+layout (constant_id = 36) const float sun_angular_radius = 0.01935;
+layout (constant_id = 37) const float bottom_radius = 6378.13721;
+layout (constant_id = 38) const float top_radius = 6438.13721;
+layout (constant_id = 39) const float mie_phase_function_g = 0.8;
+layout (constant_id = 40) const float mu_s_min = -0.5f;
+
 /*
-layout (constant_id = 24) const float aX = 0.0f;
-layout (constant_id = 25) const float aY = 0.0f;
-layout (constant_id = 26) const float aZ = 0.0f;
-//const vec3 absorption_extinction = vec3(aX, aY, aZ);
+const int TRANSMITTANCE_TEXTURE_WIDTH = 256;
+const int TRANSMITTANCE_TEXTURE_HEIGHT = 64;
 
-layout (constant_id = 30) const float mieexX = 0.0f;
-layout (constant_id = 31) const float mieexY = 0.0f;
-layout (constant_id = 32) const float mieexZ = 0.0f;
-//const vec3 mie_extinction = vec3(mieexX, mieexY, mieexZ);
+const int SCATTERING_TEXTURE_R_SIZE = 32;
+const int SCATTERING_TEXTURE_MU_SIZE = 128;
+const int SCATTERING_TEXTURE_MU_S_SIZE = 32;
+const int SCATTERING_TEXTURE_NU_SIZE = 8;
 
-layout (constant_id = 33) const float gX = 0.0f;
-layout (constant_id = 34) const float gY = 0.0f;
-layout (constant_id = 35) const float gZ = 0.0f;
-//const vec3 ground_albedo = vec3(gX, gY, gZ);
-*/
+const int SCATTERING_TEXTURE_WIDTH = SCATTERING_TEXTURE_NU_SIZE * SCATTERING_TEXTURE_MU_S_SIZE;
+const int SCATTERING_TEXTURE_HEIGHT = SCATTERING_TEXTURE_MU_SIZE;
+const int SCATTERING_TEXTURE_DEPTH = SCATTERING_TEXTURE_R_SIZE;
 
-layout (constant_id = 36) const float sun_angular_radius = 0.0f;
-layout (constant_id = 37) const float bottom_radius = 0.0f;
-layout (constant_id = 38) const float top_radius = 0.0f;
-layout (constant_id = 39) const float mie_phase_function_g = 0.0f;
-layout (constant_id = 40) const float mu_s_min = 0.0f;
-/*
-layout (constant_id = 47) const float rayleigh_width = 0.0f;
-layout (constant_id = 48) const float rayleigh_exp_term = 0.0f;
-layout (constant_id = 49) const float rayleigh_exp_scale = 0.0f;
-layout (constant_id = 50) const float rayleigh_linear_term = 0.0f;
-layout (constant_id = 51) const float rayleigh_constant_term = 0.0f;
+const int IRRADIANCE_TEXTURE_WIDTH = 64;
+const int IRRADIANCE_TEXTURE_HEIGHT = 16;
 
-layout (constant_id = 52) const float mie_width = 0.0f;
-layout (constant_id = 53) const float mie_exp_term = 0.0f;
-layout (constant_id = 54) const float mie_exp_scale = 0.0f;
-layout (constant_id = 55) const float mie_linear_term = 0.0f;
-layout (constant_id = 56) const float mie_constant_term = 0.0f;
 
-layout (constant_id = 57) const float absorption0_width = 0.0f;
-layout (constant_id = 58) const float absorption0_exp_term = 0.0f;
-layout (constant_id = 59) const float absorption0_exp_scale = 0.0f;
-layout (constant_id = 60) const float absorption0_linear_term = 0.0f;
-layout (constant_id = 61) const float absorption0_constant_term = 0.0f;
-
-layout (constant_id = 62) const float absorption1_width = 0.0f;
-layout (constant_id = 63) const float absorption1_exp_term = 0.0f;
-layout (constant_id = 64) const float absorption1_exp_scale = 0.0f;
-layout (constant_id = 65) const float absorption1_linear_term = 0.0f;
-layout (constant_id = 66) const float absorption1_constant_term = 0.0f;
+const float sun_angular_radius = 0.01935;
+const float bottom_radius = 6378.13721;
+const float top_radius = 6438.13721;
+const float mie_phase_function_g = 0.8;
+const float mu_s_min = -0.5f;
 */
 #define Length float
 #define Wavelength float
@@ -216,88 +199,3 @@ const LuminousIntensity cd = lm / sr;
 const LuminousIntensity kcd = 1000.0 * cd;
 const Luminance cd_per_square_meter = cd / m2;
 const Luminance kcd_per_square_meter = kcd / m2;
-
-/*
- * Atmosphere parameters
- *
- * Using the above types, we can now define the parameters of our atmosphere
- * model. We start with the definition of density profiles, which are needed for
- * parameters that depend on the altitude:
- */
-
-
-/*
-layout(std430, set = 0, binding = 1) buffer DensityProfileLayerUbo
-{
-    DensityProfileLayer[4] layers;
-};
-*/
-
-// An atmosphere density profile made of several layers on top of each other
-// (from bottom to top). The width of the last layer is ignored, i.e. it always
-// extend to the top atmosphere boundary. The profile values vary between 0
-// (null density) to 1 (maximum density).
-/*struct DensityProfile
-{
-   DensityProfileLayer layers[2];
-};
-
-DensityProfile RayleighDensity()
-{
-  DensityProfileLayer layer;
-
-  layer.width = rayleigh_width;
-  layer.exp_term = rayleigh_exp_term;
-  layer.exp_scale = rayleigh_exp_scale;
-  layer.linear_term = rayleigh_linear_term;
-  layer.constant_term = rayleigh_constant_term;
-
-  DensityProfile profile;
-  profile.layers[0] = layer;
-  profile.layers[1] = layer;
-
-  return profile;
-}
-
-DensityProfile MieDensity()
-{
-  DensityProfileLayer layer;
-
-  layer.width = mie_width;
-  layer.exp_term = mie_exp_term;
-  layer.exp_scale = mie_exp_scale;
-  layer.linear_term = mie_linear_term;
-  layer.constant_term = mie_constant_term;
-
-  DensityProfile profile;
-  profile.layers[0] = layer;
-  profile.layers[1] = layer;
-
-  return profile;
-}
-
-DensityProfile AbsorptionDensity()
-{
-  DensityProfileLayer layer0;
-
-  layer0.width = absorption0_width;
-  layer0.exp_term = absorption0_exp_term;
-  layer0.exp_scale = absorption0_exp_scale;
-  layer0.linear_term = absorption0_linear_term;
-  layer0.constant_term = absorption0_constant_term;
-
-  DensityProfileLayer layer1;
-
-  layer1.width = absorption1_width;
-  layer1.exp_term = absorption1_exp_term;
-  layer1.exp_scale = absorption1_exp_scale;
-  layer1.linear_term = absorption1_linear_term;
-  layer1.constant_term = absorption1_constant_term;
-
-  DensityProfile profile;
-  profile.layers[0] = layer0;
-  profile.layers[1] = layer1;
-
-  return profile;
-}
-*/

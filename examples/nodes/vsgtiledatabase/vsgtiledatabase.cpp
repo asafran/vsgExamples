@@ -107,6 +107,9 @@ int main(int argc, char** argv)
     arguments.read("-t", settings->lodTransitionScreenHeightRatio);
     arguments.read("-m", settings->maxLevel);
 
+    settings->shaderSet = vsg::createPhongShaderSet(options);
+    settings->lighting = true;
+
     auto ellipsoidModel = settings->ellipsoidModel;
 
     auto earth = vsg::TileDatabase::create();

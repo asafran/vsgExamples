@@ -9,6 +9,7 @@
 #include <vsg/core/Data.h>
 #include <vsg/state/ImageInfo.h>
 #include <vsg/state/ShaderStage.h>
+#include <vsg/utils/ShaderSet.h>
 
 namespace atmosphere {
 
@@ -34,9 +35,8 @@ struct DensityProfileLayer
 
 struct RuntimeSettings
 {
-    vsg::vec4 white_point_exp;
-    vsg::vec4 sun_direction;
-    vsg::vec2 sun_size;
+    vsg::vec4 whitePointExp;
+    vsg::vec2 sunSize;
 };
 
 class AtmosphereModel : public vsg::Inherit<vsg::Object, AtmosphereModel>
@@ -189,6 +189,8 @@ public:
 
     vsg::ref_ptr<vsg::ShaderCompileSettings> compileSettings;
 
+    vsg::ref_ptr<vsg::Value<atmosphere::RuntimeSettings>> runtimeSettings;
+
     int precomputedWavelenghts = 15;
 
 private:
@@ -222,6 +224,9 @@ private:
 
     vsg::ref_ptr<vsg::ImageInfo> _cubeMap;
 
+    vsg::ref_ptr<vsg::BufferInfo> _directLight;
+    vsg::ref_ptr<vsg::BufferInfo> _ambientLight;
+
     vsg::ShaderStage::SpecializationConstants _computeConstants;
     vsg::ShaderStage::SpecializationConstants _renderConstants;
 
@@ -238,6 +243,7 @@ public:
     vsg::ref_ptr<vsg::Node> createSky(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings);
     vsg::ref_ptr<vsg::Node> createSkyView(vsg::ref_ptr<vsg::Value<RuntimeSettings>> settings, vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::Camera> camera);
     vsg::ref_ptr<vsg::Node> createSkyBox();
+    vsg::ref_ptr<vsg::ShaderSet> phongShaderSet();
 
 private:
     void generateTextures();
@@ -245,6 +251,7 @@ private:
     vsg::ref_ptr<vsg::ImageInfo> generate2D(uint32_t width, uint32_t height, bool init = false);
     vsg::ref_ptr<vsg::ImageInfo> generate3D(uint32_t width, uint32_t height, uint32_t depth, bool init = false);
     vsg::ref_ptr<vsg::ImageInfo> generateCubemap(uint32_t size);
+    //vsg::ref_ptr<vsg::BufferInfo> generateVec4Array(uint32_t size);
 
     int scatteringWidth() const { return scaterringNU * scaterringMU_S; }
     int scatteringHeight() const { return scaterringMU; }
@@ -269,6 +276,8 @@ private:
 
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height);
     vsg::ref_ptr<vsg::Data> mapData(vsg::ref_ptr<vsg::ImageView> view, uint32_t width, uint32_t height, uint32_t depth);
+
+    friend class AtmosphereLighting;
 };
 
 extern vsg::ref_ptr<AtmosphereModel> createAtmosphereModel(vsg::ref_ptr<vsg::Window> window, vsg::ref_ptr<vsg::EllipsoidModel> eps, vsg::ref_ptr<vsg::Options> options);

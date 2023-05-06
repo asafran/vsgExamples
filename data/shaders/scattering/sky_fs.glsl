@@ -14,10 +14,15 @@ layout(location = 0) out vec4 outColor;
 
 layout(set = 0, binding = 0, std140) uniform Settings
 {
-	vec4 white_point_exp;
-	vec4 sun_direction;
-	vec2 sun_size;
+	vec4 whitePointExp;
+	vec2 sunSize;
 } settings;
+
+layout(set = 0, binding = 0, std140) uniform Positional
+{
+	vec4 sunDirection;
+    vec4 cameraPos;
+} positional;
 
 layout(set = 0, binding = 1) uniform sampler2D transmittance_texture;
 layout(set = 0, binding = 2) uniform sampler2D irradiance_texture;
@@ -78,11 +83,11 @@ void main()
 
 	// Compute the radiance of the sky.
 	vec3 transmittance;
-	vec3 radiance = GetSkyRadiance(cameraPos, view_direction, 4.0, settings.sun_direction.xyz, transmittance);
+	vec3 radiance = GetSkyRadiance(cameraPos, view_direction, 4.0, settings.sunDirection.xyz, transmittance);
 
 	// If the view ray intersects the Sun, add the Sun radiance.
-	if (dot(view_direction, settings.sun_direction.xyz) > settings.sun_size.y)
+	if (dot(view_direction, settings.sunDirection.xyz) > settings.sunSize.y)
 		radiance = radiance + transmittance * GetSolarRadiance();
 
-	outColor = vec4(pow(vec3(1.0) - exp(-radiance / settings.white_point_exp.rbg * settings.white_point_exp.a), vec3(1.0 / 2.2)), 1.0);
+	outColor = vec4(pow(vec3(1.0) - exp(-radiance / settings.whitePointExp.rbg * settings.whitePointExp.a), vec3(1.0 / 2.2)), 1.0);
 }
